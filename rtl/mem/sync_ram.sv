@@ -24,10 +24,14 @@ module sync_ram #(
 
   logic [7:0] mem [0:(1 << AW) - 1];
 
-  // Zero first, so a short init file leaves defined bytes above it in
-  // simulation the way an FPGA's block RAM does on the real part.
   initial begin
+    // Zero first, so a short init file leaves defined bytes above it in
+    // simulation the way an FPGA's block RAM does on the real part.  Hidden
+    // from synthesis: unrolling it over a 256 KB array is minutes of work for
+    // a result the tools already give for free.
+    // synthesis translate_off
     for (int i = 0; i < (1 << AW); i++) mem[i] = 8'h00;
+    // synthesis translate_on
     if (INIT_FILE != "") $readmemh(INIT_FILE, mem);
   end
 
