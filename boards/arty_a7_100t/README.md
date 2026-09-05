@@ -5,6 +5,15 @@ over, so nothing here is squeezed.
 
 ## Build
 
+The flow wants Vivado 2026.1 or later, which dropped the ML Standard and
+Enterprise editions: the installer offers one product, Vivado Design Suite,
+and a license tier decides what it will build. The free Basic tier covers
+all of 7 Series, so it is enough for this board — but unlike the old
+Standard edition it is a license you have to generate before Vivado will
+start at all. Leave the Artix-7 device family checked when the installer
+asks what to install, or `create_project -part xc7a100tcsg324-1` fails with
+an unknown part.
+
 ```
 cd boards/arty_a7_100t
 vivado -mode batch -source build.tcl
