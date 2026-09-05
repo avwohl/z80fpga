@@ -11,5 +11,8 @@ boards/*/*.bin
 boards/*/*.log
 boards/*/*.mem
 boards/*/boot.hex
+# Vivado opens these where it was launched, before build.tcl cds into build/
+vivado*.jou
+.Xil/
 __pycache__/
 *.pyc
