@@ -1,0 +1,14 @@
+create this directory as avwohl/z80fpga private repo
+create a FPGA implementation of the Z80 processor
+- support banked memory
+- plan to extend to Z180 and possibly eZ80
+I have the following FPGA hardware on hand for testing
+https://www.quicklogic.com/devices/qomu-mcu-development-kit/
+https://www.crowdsupply.com/signaloid/signaloid-c0-microsd
+digilent A76 100T
+this is a windows machine that currently doesnt have any of the above hardware
+software installed.
+Our repo git@github.com:avwohl/cpmemu.git contains the qkz z80 emulator in c++
+which may be useful. Either as a specification, z80 test tools, or c++ code
+to cross compile to fpga
+

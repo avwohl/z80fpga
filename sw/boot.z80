@@ -1,0 +1,130 @@
+; Boot monitor for the z80fpga SoC.
+;
+; Prints a banner, proves the banked memory works by writing a signature
+; into every RAM bank and reading it back, then echoes the console.
+;
+; The bank check cannot run from ROM: selecting a RAM bank swaps the low
+; 32 KB out from under the program counter.  So it is copied into the common
+; bank at 8000h first and runs there, and it does its own port I/O rather
+; than calling back into ROM.
+
+UART_ST  equ 000h              ; bit 0 RX ready, bit 1 TX idle
+UART_DAT equ 001h
+BANK_RAM equ 078h
+BANK_ROM equ 07Ch
+RAM_BASE equ 080h              ; RAM bank ids start here
+RAM_N    equ 2                 ; must match the SoC's RAM_BANKS
+
+         org 0000h
+
+start:   di
+         ld sp,0FFF0h
+         ld hl,banner
+         call puts
+
+         ; copy the bank checker into the common bank and run it there
+         ld hl,bt_start
+         ld de,08000h
+         ld bc,bt_end-bt_start
+         ldir
+         call 08000h            ; returns the error count in A
+
+         or a
+         jr nz,bad
+         ld hl,msg_ok
+         call puts
+         jr report
+bad:     push af
+         ld hl,msg_bad
+         call puts
+         pop af
+         add a,'0'
+         call putc
+report:  ld hl,crlf
+         call puts
+
+         ld hl,prompt
+         call puts
+echo:    call getc
+         cp 0Dh
+         jr nz,echo1
+         ld a,0Dh
+         call putc
+         ld a,0Ah
+         call putc
+         jr echo
+echo1:   call putc
+         jr echo
+
+; ---------------------------------------------------------------- console
+putc:    push af
+putc1:   in a,(UART_ST)
+         bit 1,a
+         jr z,putc1
+         pop af
+         out (UART_DAT),a
+         ret
+
+getc:    in a,(UART_ST)
+         bit 0,a
+         jr z,getc
+         in a,(UART_DAT)
+         ret
+
+puts:    ld a,(hl)
+         or a
+         ret z
+         call putc
+         inc hl
+         jr puts
+
+; ------------------------------------------------------- the bank checker
+; Position independent: it runs from 8000h but is assembled here.  Only
+; relative jumps, and the only absolute addresses it touches are 4000h and
+; 4001h, which is the point - those live in whichever bank is selected.  The
+; offset is deliberately clear of both the copied code and the stack, which
+; land in the common bank at offsets 0000h and 7FF0h.
+bt_start:
+         ld c,RAM_BASE
+         ld b,RAM_N
+btw:     ld a,c
+         out (BANK_RAM),a
+         ld (4000h),a
+         xor 0FFh
+         ld (4001h),a
+         inc c
+         djnz btw
+
+         ld c,RAM_BASE
+         ld b,RAM_N
+         ld d,0                 ; error count
+btr:     ld a,c
+         out (BANK_RAM),a
+         ld a,(4000h)
+         cp c
+         jr z,btr1
+         inc d
+btr1:    ld a,(4001h)
+         ld e,a
+         ld a,c
+         xor 0FFh
+         cp e
+         jr z,btr2
+         inc d
+btr2:    inc c
+         djnz btr
+
+         xor a                  ; back to ROM bank 0 before returning
+         out (BANK_ROM),a
+         ld a,d
+         ret
+bt_end:
+
+; ------------------------------------------------------------------ text
+banner:  db "z80fpga ready", 0Dh, 0Ah, 0
+msg_ok:  db "banked memory ok", 0
+msg_bad: db "banked memory errors: ", 0
+crlf:    db 0Dh, 0Ah, 0
+prompt:  db "> ", 0
+
+         end

@@ -1,0 +1,113 @@
+# z80fpga
+
+A Zilog Z80 in SystemVerilog, with RomWBW-compatible banked memory.
+
+The core is **microcoded**: `tools/gen_z80.py` describes the instruction set in
+Python and emits the micro-program ROM, the opcode dispatch tables and the
+field encodings the RTL uses. Adding an instruction means adding a line to the
+description, not editing a decoder — which is the point, because the plan is
+to extend this to the Z180 and possibly the eZ80.
+
+It passes the whole of the
+[SingleStepTests](https://github.com/SingleStepTests/z80) suite:
+
+```
+0/1604000 tests failed across 1604 opcodes (1604 opcodes clean)
+```
+
+That is every opcode including the DD/FD/ED/CB and DD CB prefixed forms, 1000
+randomised cases each, compared on the full architectural state — the
+undocumented X and Y flags, MEMPTR (WZ), the Q register that SCF and CCF read,
+I, R, IFF1/IFF2 and the interrupt mode — **and** on the cycle-by-cycle bus
+trace: address, data and the RD / WR / MREQ / IORQ pins in every T-state.
+
+The suite says nothing about interrupts, so `sim/tb_irq.sv` covers those
+separately: NMI, IM 0, IM 1, IM 2, the EI delay, masking by IFF1, and waking
+from HALT, each checked against the databook's T-state count.
+
+## What is here
+
+| | |
+|---|---|
+| `rtl/core/` | the CPU: ALU, sequencer, and the generated ROMs |
+| `rtl/soc/` | banked-memory MMU, UART, and a small SoC around the core |
+| `rtl/mem/` | block-RAM and iCE40 SPRAM backing stores |
+| `tools/gen_z80.py` | the instruction-set description and the ROM generator |
+| `tools/run_sst.py` | the SingleStepTests harness |
+| `tools/zasm.py` | a Z80 assembler, for the boot ROM and test programs |
+| `sim/` | test benches |
+| `sw/boot.z80` | the boot monitor: banner, bank check, console echo |
+| `boards/` | Arty A7-100T, Signaloid C0-microSD, and why not the Qomu |
+
+`docs/architecture.md` explains how the microcode engine works,
+`docs/verification.md` how it is tested, `docs/memory_banking.md` the bank map,
+and `docs/roadmap.md` what the Z180 and eZ80 need.
+
+## Getting the tools
+
+Everything here builds with the [OSS CAD
+Suite](https://github.com/YosysHQ/oss-cad-suite-build) — Icarus Verilog for
+simulation, yosys and nextpnr for the iCE40 bitstream. Unpack it and:
+
+```
+source tools/ossenv.sh          # set OSS_CAD_ROOT if it is not /c/temp/tools
+```
+
+The Arty flow wants Vivado. The test harness wants a checkout of
+[SingleStepTests/z80](https://github.com/SingleStepTests/z80); point
+`Z80_TESTS` or `--suite` at it.
+
+## Running it
+
+```
+make gen                        # regenerate the microcode ROMs
+make sim                        # build the benches
+make test                       # assembler, interrupts, SoC boot, opcode sweep
+make test-full                  # the whole suite, ~1.6M cases
+```
+
+`make test` boots the monitor in simulation and should print:
+
+```
+z80fpga ready
+banked memory ok
+>
+```
+
+— the banner, the result of writing a signature into every RAM bank and
+reading it back, and the prompt. Then it types `AB<CR>` at the UART and checks
+what comes back.
+
+## The core
+
+```
+z80_core #(.STROBE_1T(1)) (
+    clk, rst_n, clk_en,
+    a, din, dout,
+    mreq_n, iorq_n, rd_n, wr_n, m1_n, rfsh_n, halt_n, busak_n,
+    wait_n, int_n, nmi_n, busrq_n
+);
+```
+
+One `clk_en` tick is one T-state, so the CPU speed is set by how often you
+raise it; tie it high to run at the fabric clock. The pins behave like the
+part: M1 with a refresh address on T3–T4, 3-T memory cycles, 4-T I/O cycles,
+WAIT stretching, and NMI, IM 0, IM 1 and IM 2 interrupt acknowledge.
+
+`STROBE_1T` picks between the one-T-state strobes the test suite models
+(default, and what a synchronous FPGA memory wants) and holding MREQ/RD/WR
+across the cycle the way the real part drives an external bus.
+
+## Boards
+
+- **[Arty A7-100T](boards/arty_a7_100t/)** — the primary target. 8.33 MHz Z80,
+  64 KB ROM and 256 KB RAM in block RAM, console on the on-board USB-UART.
+- **[Signaloid C0-microSD](boards/c0_microsd/)** — fits, at 94% of the
+  UP5K's logic. 128 KB of RAM in the four SPRAM blocks, an 8 KB boot ROM,
+  console on the SD breakout pins.
+- **[Qomu](boards/qomu/)** — does not fit, and cannot. The note explains why
+  and what the board is good for instead.
+
+No hardware was available while this was written, so the board builds are
+verified only to the point of a placed and routed bitstream. What runs in
+simulation is the SoC, end to end.

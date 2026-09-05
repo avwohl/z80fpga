@@ -1,0 +1,8 @@
+# Signaloid C0-microSD (iCE40UP5K-UWG30).
+# Pin names follow litex-boards/litex_boards/platforms/signaloid_c0_microsd.py.
+
+set_io clk12     B3     # also SD_CLK
+set_io led_red   B5
+set_io led_green A5
+set_io sd_cmd    A4     # UART TX out
+set_io sd_dat0   A1     # UART RX in

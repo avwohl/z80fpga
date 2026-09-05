@@ -1,0 +1,15 @@
+# simulation and build products
+sim/*.vvp
+sim/vec.txt
+sim/res.txt
+sim/dbg/
+sim/full/
+boards/*/build/
+boards/*/*.json
+boards/*/*.asc
+boards/*/*.bin
+boards/*/*.log
+boards/*/*.mem
+boards/*/boot.hex
+__pycache__/
+*.pyc

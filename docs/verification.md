@@ -1,0 +1,116 @@
+# Verification
+
+## The result
+
+```
+$ make test-full
+0/1604000 tests failed across 1604 opcodes (1604 opcodes clean)
+```
+
+Every opcode in the [SingleStepTests](https://github.com/SingleStepTests/z80)
+suite — base, `CB`, `ED`, `DD`, `FD`, `DD CB` and `FD CB` — 1000 randomised
+cases each, compared on:
+
+- **the full architectural state**: A F B C D E H L, the alternate set, IX, IY,
+  SP, PC, **WZ** (MEMPTR), I, R, IFF1, IFF2, the interrupt mode, and **Q** —
+  the internal flag latch that SCF and CCF read;
+- **memory**, at every address the instruction is expected to have touched;
+- **the port transaction**, address and byte and direction;
+- **the T-state count**;
+- **the bus trace, cycle by cycle**: the address pins, the data pins, and
+  RD / WR / MREQ / IORQ, in every T-state of the instruction.
+
+That last one is what makes it more than a functional check. It catches, for
+instance, the refresh address staying on the pins through the internal cycles
+of `INC BC`, and the extra T-state of a taken `CALL cc,nn` landing inside the
+second operand read rather than after it.
+
+## How to run it
+
+```
+source tools/ossenv.sh
+make sim
+python tools/run_sst.py --all -n 20 --cycles     # a 30-second sweep
+python tools/run_sst.py --all --cycles           # the whole thing
+python tools/run_sst.py "dd cb __ 06" -v --cycles  # one opcode, with detail
+```
+
+Point `--suite` (or `Z80_TESTS`) at a checkout of the suite. `-n` limits the
+cases per opcode; `-v` prints the first failing case's initial state and the
+first ten mismatches.
+
+`tools/run_sst.py` flattens the JSON into a text vector file, runs
+`sim/tb_sst.sv` over it under `vvp`, and diffs the results. It batches many
+opcode files into one bench run because launching the simulator dominates
+otherwise — the full sweep at 20 cases per opcode takes about half a minute.
+
+Everything goes through plain file I/O, so no VPI and no C compiler are
+needed; Icarus Verilog on its own is enough.
+
+## The bench
+
+`sim/tb_sst.sv` forces the core's registers to the test's initial state,
+writes the initial RAM, runs exactly one instruction, and reports. "One
+instruction" is detected by watching for the core to return to the start of an
+opcode fetch with its first-fetch flag set. For a repeating block instruction
+that is one iteration, which is what the suite expects.
+
+Two details the bench has to get right, both learned from mismatches:
+
+- The register load has to happen a delta after a clock edge, or the
+  non-blocking updates from that edge overwrite it.
+- A byte read appears on the data pins in the T-state *after* the strobe, not
+  during it. The suite's "simplified memory access" model pulses MREQ/RD for
+  one T-state and shows the data in the next.
+
+## The SoC test
+
+```
+make test        # runs all three benches and a 20-case sweep
+vvp sim/tb_soc.vvp
+```
+
+`sim/tb_soc.sv` boots `sw/boot.z80` out of ROM bank 0 at a deliberately slow
+1 MHz, so a 115200-baud bit is eight clocks. It decodes `uart_tx` and drives
+`uart_rx` for real, so the serialiser is in the loop, and it checks that:
+
+- the banner comes out;
+- the monitor's bank check passes — it copies a routine into the common bank,
+  writes a signature into every RAM bank through the low window, reads them all
+  back, and reports the error count;
+- `AB<CR>` typed at the port comes back as `A`, `B`, `CR`, `LF`.
+
+`+trace_io=1` logs the CPU's console port traffic, which is how you tell a
+byte lost in the UART from one the program never read. That is exactly how the
+missing receive FIFO was found: the CPU's `in` log showed `41` then `0d`, with
+no `42` in between.
+
+## The interrupt tests
+
+The SingleStepTests suite does not exercise interrupt entry at all, so
+`sim/tb_irq.sv` covers it directly:
+
+| case | checked |
+|---|---|
+| NMI | vectors to 0066h, pushes PC, clears IFF1 and keeps IFF2, 11 T |
+| INT, IM 1 | vectors to 0038h, clears both IFFs, 13 T |
+| INT, IM 2 | fetches the vector from `{I, bus byte}`, 19 T |
+| INT, IM 0 | executes the byte on the bus - `FFh`, RST 38h - 13 T |
+| masked | nothing happens while IFF1 is clear |
+| EI delay | the instruction after EI is not interruptible; the one after it is |
+| HALT | holds with `halt_n` low and PC still, and an interrupt wakes it |
+
+Each case checks where the CPU ended up, what it pushed, what happened to
+IFF1 and IFF2, and the entry's T-state count against the databook figure.
+
+The EI delay falls out of the design rather than being special-cased: IFF1 is
+read before the clock edge that EI's own action sets it on, so the boundary at
+the end of EI cannot accept an interrupt and the next one can.
+
+## What is not covered
+
+- **WAIT and BUSRQ.** `wait_n` stretches the strobe T-state and is exercised
+  only by inspection. `busak_n` currently just mirrors `busrq_n`; a real bus
+  grant that tri-states the pins at an M-cycle boundary is not implemented.
+- **Hardware.** No board was available. The Arty and C0-microSD builds are
+  verified to a placed, routed, timing-closed bitstream and no further.
