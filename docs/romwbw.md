@@ -1,7 +1,42 @@
 # Running RomWBW
 
-A stock RomWBW ROM boots on this core. In simulation, `make romwbw` gets to
-the loader prompt:
+**CP/M 2.2 runs on the hardware.** On a Nexys A7-100T, 2026-09-06:
+
+```
+Loading CP/M 2.2...
+
+CBIOS v3.5.1 [WBW]
+
+Formatting RAMDISK...
+
+Configuring Drives...
+        A:=MD0:0
+        B:=MD1:0
+        ...
+CP/M-80 v2.2, 54.0K TPA
+
+B>DIR
+B: ASM      COM : CLRDIR   COM : COMPARE  COM : COPY     COM
+B: DDT      COM : DDTZ     COM : DUMP     COM : ED       COM
+...
+B>PIP A:=B:STAT.COM
+B>DIR A:
+A: STAT     COM
+A>STAT
+A: R/W, Space: 242k
+B: R/W, Space: 22k
+```
+
+That last part is the whole memory system working at once: a file copied from
+the ROM disk in block RAM onto the RAM disk in DDR2, listed back, and then
+loaded from DDR2 and executed. "Formatting RAMDISK" is CP/M writing its way
+across a quarter of a megabyte of DDR2 before it will even give you a prompt.
+
+The build is [boards/nexys_a7_100t/romwbw](../boards/nexys_a7_100t/romwbw/README.md).
+
+## In simulation
+
+`make romwbw` gets to the loader prompt without any hardware:
 
 ```
 RomWBW HBIOS v3.5.1, 2025-05-21
@@ -91,11 +126,19 @@ in block RAM beside 512 KB of RAM. Banks 2 to 15 read as 0xFF, so the 384 KB
 ROM disk the banner advertises is not really there and the loader's disk
 commands will not find it. Reaching the prompt does not depend on it.
 
-On hardware the memory is the whole problem. 512 KB of RAM fits in block RAM
-at 128 of the part's 135 RAMB36 tiles, but 512 KB of ROM beside it is another
-128 and the part has 135. The board's DDR2 is up and tested
-([boards/nexys_a7_100t/ddr2](../boards/nexys_a7_100t/ddr2/README.md)) and has
-room for both several hundred times over; what it still needs is a cache
-between the core's byte-wide, `clk_en`-paced bus and the MIG's sixteen-byte
-AXI beats, plus somewhere for the reset fetch to come from, since DDR2 is
-volatile.
+On hardware both halves fit, but not in the same place. 512 KB of ROM is 128
+of the part's 135 RAMB36 tiles, which leaves nothing for the RAM, so the RAM
+goes to DDR2. The ROM has to be the one in block RAM, because it is the only
+one whose contents must exist before the first instruction fetch: DDR2 is
+volatile and there is nothing to load it from at reset. RAM does not care,
+since it starts undefined anyway.
+
+DDR2 cannot answer in a T-state and does not pretend to. `rtl/mem/ddr2_ram.sv`
+holds `wait_n` low until its AXI transaction finishes, and the core freezes
+`tcnt` at the strobe T-state until it lets go. No cache is needed to be
+correct; there is a one-line read cache anyway, because instruction fetch is
+sequential and it turns sixteen DDR2 reads into one.
+
+What is still missing is a disk. `HDSK0:`/`HDSK1:` are advertised but nothing
+is behind them, so `C:` through `J:` are not real. The board has a microSD
+slot and RomWBW knows how to use one; that is the next piece.

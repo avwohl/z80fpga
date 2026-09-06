@@ -29,6 +29,11 @@ constraints are doing and
 Vivado 2026.1 wants. Timing closes at WNS +1.038 ns, 0 of 2507 endpoints
 failing, using about 3000 LUTs (4.7%), 393 registers and 72 block RAM tiles.
 
+## RomWBW and CP/M
+
+CP/M 2.2 runs on this board — [romwbw/README.md](romwbw/README.md) is the
+build, with the full 512 KB ROM in block RAM and 512 KB of RAM in DDR2.
+
 ## DDR2
 
 The board's 128 MiB of DDR2 is up and verified on hardware — see

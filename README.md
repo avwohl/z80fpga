@@ -44,8 +44,8 @@ from HALT, each checked against the databook's T-state count.
 and `docs/roadmap.md` what the Z180 and eZ80 need.
 `docs/vivado_license.md` is for the Vivado builds: what the free licence is
 called since 2026.1 renamed it, and how to get one.
-`docs/romwbw.md` is how a stock RomWBW ROM boots on this core — it reaches the
-loader prompt in simulation — and what the console has to look like for that.
+`docs/romwbw.md` is how a stock RomWBW ROM boots on this core, all the way to
+CP/M 2.2 on real hardware, and what the console has to look like for that.
 
 ## Getting the tools
 

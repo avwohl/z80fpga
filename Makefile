@@ -34,7 +34,7 @@ gen $(GEN): tools/gen_z80.py tools/z80_enc.py
 boot sw/boot.hex: sw/boot.z80
 	$(PYTHON) tools/zasm.py sw/boot.z80 -o sw/boot.hex --size 32768
 
-sim: sim/tb_sst.vvp sim/tb_soc.vvp sim/tb_irq.vvp
+sim: sim/tb_sst.vvp sim/tb_soc.vvp sim/tb_irq.vvp sim/tb_ddr2ram.vvp
 
 sim/tb_sst.vvp: sim/tb_sst.sv $(CORE) $(GEN)
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_sst.sv $(CORE)
@@ -44,6 +44,11 @@ sim/tb_soc.vvp: sim/tb_soc.sv $(SOC) $(GEN) sw/boot.hex
 
 sim/tb_irq.vvp: sim/tb_irq.sv $(CORE) $(GEN)
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_irq.sv $(CORE)
+
+# The SoC with its RAM in DDR2: wait states and the AXI handshakes, against a
+# behavioural slave with deliberately awkward latency.
+sim/tb_ddr2ram.vvp: sim/tb_ddr2ram.sv $(SOC) rtl/mem/ddr2_ram.sv $(GEN) sw/boot.hex
+	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_ddr2ram.sv $(SOC) rtl/mem/ddr2_ram.sv
 
 # Boot a stock RomWBW ROM.  The image is not in the repository; ROMWBW_ROM
 # points at one, the way Z80_TESTS points at the opcode suite:
@@ -67,6 +72,7 @@ test: sim
 	$(PYTHON) tools/test_zasm.py
 	$(VVP) sim/tb_irq.vvp
 	$(VVP) sim/tb_soc.vvp
+	$(VVP) sim/tb_ddr2ram.vvp
 	$(PYTHON) tools/run_sst.py --all -n 20 --cycles
 
 test-full: sim

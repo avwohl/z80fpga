@@ -19,6 +19,9 @@ module z80_soc #(
     parameter int CPU_DIV   = 25,           // 100 MHz / 25 = 4 MHz Z80
     parameter int BAUD      = 115200,
     parameter bit CONSOLE_SSER = 1'b0,      // 1: RomWBW SSER console at 0x68/0x6D
+    parameter int MEM_WAIT   = 0,           // extra T-states per memory cycle
+    parameter bit USE_DDR2   = 1'b0,        // RAM banks live in DDR2, not block RAM
+    parameter int DDR2_BASE  = 0,           // byte offset of the RAM in DDR2
     parameter int ROM_BANKS = 1,            // x 32 KB
     parameter int RAM_BANKS = 2,
     // Backing store size, as an address width.  Defaults to the whole bank
@@ -36,7 +39,24 @@ module z80_soc #(
     input  logic       uart_rx,
     output logic       uart_tx,
     output logic [7:0] led,
-    input  logic [7:0] sw
+    input  logic [7:0] sw,
+
+    // AXI4 to the MIG.  Only driven when USE_DDR2; leave unconnected otherwise.
+    output logic [26:0]  m_axi_awaddr,
+    output logic         m_axi_awvalid,
+    input  logic         m_axi_awready,
+    output logic [127:0] m_axi_wdata,
+    output logic [15:0]  m_axi_wstrb,
+    output logic         m_axi_wvalid,
+    input  logic         m_axi_wready,
+    input  logic         m_axi_bvalid,
+    output logic         m_axi_bready,
+    output logic [26:0]  m_axi_araddr,
+    output logic         m_axi_arvalid,
+    input  logic         m_axi_arready,
+    input  logic [127:0] m_axi_rdata,
+    input  logic         m_axi_rvalid,
+    output logic         m_axi_rready
 );
 
   localparam int ROM_AW = (ROM_AW_P != 0) ? ROM_AW_P : 15 + $clog2(ROM_BANKS);
@@ -59,6 +79,37 @@ module z80_soc #(
   logic  [7:0] din, dout;
   logic mreq_n, iorq_n, rd_n, wr_n, m1_n, rfsh_n, halt_n, busak_n;
 
+  // ------------------------------------------------------------ wait states
+  // Memory that cannot answer in one T-state stretches the cycle by holding
+  // wait_n low at the strobe T-state; the core freezes tcnt there.  MEM_WAIT
+  // inserts a fixed number of them, which is how the path gets tested without
+  // real slow memory attached.  A DDR2-backed bank drives the same signal from
+  // its own ready instead.
+  logic wait_n;
+  logic ram_ready, ram_cycle;   // driven in the memory section below
+
+  generate
+    if (USE_DDR2) begin : g_ddrwait
+      assign wait_n = !(ram_cycle && !ram_ready);
+    end else if (MEM_WAIT == 0) begin : g_nowait
+      assign wait_n = 1'b1;
+    end else begin : g_wait
+      localparam int WW = $clog2(MEM_WAIT + 1);
+      logic [WW-1:0] wcnt;
+      logic          mem_cycle;
+      assign mem_cycle = !mreq_n && (!rd_n || !wr_n);
+      always_ff @(posedge clk) begin
+        if (!rst_n)               wcnt <= '0;
+        else if (!mem_cycle)      wcnt <= '0;
+        else if (clk_en && wcnt != WW'(MEM_WAIT)) wcnt <= wcnt + 1'b1;
+      end
+      assign wait_n = !(mem_cycle && wcnt != WW'(MEM_WAIT));
+    end
+    if (!USE_DDR2) begin : g_noready
+      assign ram_ready = 1'b1;
+    end
+  endgenerate
+
   z80_core #(
       .UCODE_MEM (UCODE_MEM),
       .DISP_MEM  (DISP_MEM)
@@ -67,7 +118,7 @@ module z80_soc #(
       .a (a), .din (din), .dout (dout),
       .mreq_n (mreq_n), .iorq_n (iorq_n), .rd_n (rd_n), .wr_n (wr_n),
       .m1_n (m1_n), .rfsh_n (rfsh_n), .halt_n (halt_n), .busak_n (busak_n),
-      .wait_n (1'b1), .int_n (1'b1), .nmi_n (1'b1), .busrq_n (1'b1)
+      .wait_n (wait_n), .int_n (1'b1), .nmi_n (1'b1), .busrq_n (1'b1)
   );
 
   // -------------------------------------------------------------------- the MMU
@@ -91,7 +142,8 @@ module z80_soc #(
   logic [7:0] rom_rdata, ram_rdata;
   logic       mem_we;
 
-  assign mem_we = !mreq_n && !wr_n;
+  assign mem_we    = !mreq_n && !wr_n;
+  assign ram_cycle = !mreq_n && (!rd_n || !wr_n) && !sel_rom;
 
   sync_ram #(.AW (ROM_AW), .READ_ONLY (1'b1), .INIT_FILE (ROM_INIT)) u_rom (
       .clk (clk), .en (1'b1), .addr (phys[ROM_AW-1:0]),
@@ -103,6 +155,24 @@ module z80_soc #(
       spram_ice40 u_ram (
           .clk (clk), .addr (17'(phys[RAM_AW-1:0])), .wdata (dout),
           .we (mem_we && !sel_rom && clk_en), .rdata (ram_rdata)
+      );
+    end else if (USE_DDR2) begin : g_ddr2
+      // The RAM banks live in DDR2 and cannot answer in a T-state, so this one
+      // drives wait_n instead of pretending to be fast.  Note the write is NOT
+      // gated by clk_en the way the block RAM's is: ddr2_ram latches the cycle
+      // itself and acknowledges it once, and gating here would hand it a
+      // request that vanishes between enable ticks.
+      ddr2_ram #(.AW (RAM_AW), .BASE (DDR2_BASE)) u_ram (
+          .clk (clk), .rst_n (rst_n),
+          .req (ram_cycle), .we (mem_we && !sel_rom),
+          .addr (phys[RAM_AW-1:0]), .wdata (dout),
+          .rdata (ram_rdata), .ready (ram_ready),
+          .awaddr (m_axi_awaddr), .awvalid (m_axi_awvalid), .awready (m_axi_awready),
+          .wdata_axi (m_axi_wdata), .wstrb (m_axi_wstrb),
+          .wvalid (m_axi_wvalid), .wready (m_axi_wready),
+          .bvalid (m_axi_bvalid), .bready (m_axi_bready),
+          .araddr (m_axi_araddr), .arvalid (m_axi_arvalid), .arready (m_axi_arready),
+          .rdata_axi (m_axi_rdata), .rvalid (m_axi_rvalid), .rready (m_axi_rready)
       );
     end else begin : g_bram
       sync_ram #(.AW (RAM_AW)) u_ram (

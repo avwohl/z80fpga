@@ -1,6 +1,7 @@
 # simulation and build products
 sim/*.vvp
 sim/romwbw64k.hex
+boards/*/*/romwbw*.hex
 sim/vec.txt
 sim/res.txt
 sim/dbg/
