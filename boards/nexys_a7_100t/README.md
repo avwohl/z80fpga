@@ -29,6 +29,14 @@ constraints are doing and
 Vivado 2026.1 wants. Timing closes at WNS +1.038 ns, 0 of 2507 endpoints
 failing, using about 3000 LUTs (4.7%), 393 registers and 72 block RAM tiles.
 
+## DDR2
+
+The board's 128 MiB of DDR2 is up and verified on hardware — see
+[ddr2/README.md](ddr2/README.md). It is not wired to the Z80 yet; that needs a
+cache between the core's byte-wide bus and the MIG's sixteen-byte AXI beats.
+What it buys is the 512 KB ROM window: 512 KB of RAM fits in block RAM, but
+ROM and RAM together are 1 MB and block RAM tops out near 540 KB.
+
 ## The console, and the cable
 
 One micro-USB does everything. The board's FT2232 is a two-channel part:

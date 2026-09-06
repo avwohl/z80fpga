@@ -5,6 +5,7 @@ sim/res.txt
 sim/dbg/
 sim/full/
 boards/*/build/
+boards/*/*/build/
 boards/*/*.json
 boards/*/*.asc
 boards/*/*.bin
