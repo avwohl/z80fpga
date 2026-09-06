@@ -47,7 +47,8 @@ module hdsk #(
     // Z80 port side
     input  logic [7:0]  port_addr,
     input  logic [7:0]  port_wdata,
-    input  logic        port_wr,
+    input  logic        port_wr,     // strobe, gated by clk_en
+    input  logic        port_active, // the same cycle, ungated: high all of it
     input  logic        port_rd,
     output logic [7:0]  port_rdata,
     output logic        port_hit,
@@ -68,6 +69,8 @@ module hdsk #(
     input  logic        sd_busy,
     input  logic        sd_err,
     input  logic        sd_ready,
+    input  logic [7:0]  sd_dbg,
+    input  logic [4:0]  sd_dbg_state,
     output logic [8:0]  sd_buf_addr,
     output logic [7:0]  sd_buf_wdata,
     output logic        sd_buf_we,
@@ -89,8 +92,27 @@ module hdsk #(
   state_t      state;
   logic [7:0]  cmd, unit, sec, trk_lo, trk_hi, dma_lo, dma_hi;
   logic [2:0]  parm_i;
+  // One byte per OUT.  The core is built with STROBE_1T so the strobe is a
+  // single T-state and this is belt and braces -- but this counts bytes, and a
+  // held strobe would be seen once per clk_en tick and frame the seven-byte
+  // block wrongly, which is a bad way to find out that the parameter changed.
+  logic        taken;
+  // A watchdog over the whole command.  Every wait here is on something
+  // outside this module -- the card coming up, the card answering, the DMA,
+  // the memory -- and any of them failing to answer leaves io_wait asserted
+  // and the CPU frozen with nothing on the console to say why.  Time the
+  // command out instead and report where it was waiting.  ~1.3 s at 100 MHz,
+  // which is long enough for a card that takes most of a second to finish
+  // ACMD41 and far longer than any transfer.
+  logic [26:0] tmo;
   logic [9:0]  cnt;
   logic [7:0]  status;
+  // A second status, for the state of the card machine at the moment this one
+  // gave up.  One byte cannot say both where this controller was waiting and
+  // what the card machine was doing, and both are needed: the first says which
+  // wait expired, the second what it was waiting on.  A second status read,
+  // with nothing outstanding, returns it.
+  logic [7:0]  status2;
   logic        pending;
 
   wire [23:0] hdsk_lba = {trk_hi, trk_lo, sec};
@@ -100,7 +122,9 @@ module hdsk #(
       state       <= H_IDLE;
       cmd <= CMD_NONE; unit <= 8'd0; sec <= 8'd0;
       trk_lo <= 8'd0; trk_hi <= 8'd0; dma_lo <= 8'd0; dma_hi <= 8'd0;
-      parm_i <= 3'd0; cnt <= 10'd0; status <= 8'd0; pending <= 1'b0;
+      parm_i <= 3'd0; cnt <= 10'd0; status <= 8'd0; pending <= 1'b0; taken <= 1'b0;
+      status2 <= 8'h8E;
+      tmo <= 27'd0;
       dma_req <= 1'b0; dma_we <= 1'b0; dma_addr <= 16'd0; dma_wdata <= 8'd0;
       sd_start_rd <= 1'b0; sd_start_wr <= 1'b0; sd_lba <= 32'd0;
       sd_buf_addr <= 9'd0; sd_buf_wdata <= 8'd0; sd_buf_we <= 1'b0;
@@ -109,13 +133,16 @@ module hdsk #(
       sd_start_rd <= 1'b0;
       sd_start_wr <= 1'b0;
       sd_buf_we   <= 1'b0;
+      if (!port_active) taken <= 1'b0;
 
       case (state)
         // -------------------------------------------------- collect a command
         H_IDLE: begin
           io_wait <= 1'b0;
           dma_req <= 1'b0;
-          if (port_wr && port_hit) begin
+          tmo     <= 27'h7FF_FFFF;    // reloaded here, spent by the command
+          if (port_wr && port_hit && !taken) begin
+            taken <= 1'b1;
             case (port_wdata)
               CMD_READ, CMD_WRITE: begin
                 cmd    <= port_wdata;
@@ -133,7 +160,8 @@ module hdsk #(
         end
 
         H_PARM: begin
-          if (port_wr && port_hit) begin
+          if (port_wr && port_hit && !taken) begin
+            taken <= 1'b1;
             case (parm_i)
               3'd0: unit   <= port_wdata;
               3'd1: sec    <= port_wdata;
@@ -154,8 +182,10 @@ module hdsk #(
         // The IN is where SIMH does the work, so it is where we do it too.
         H_GO: begin
           if (!sd_ready) begin
-            status <= 8'd1;                 // no card
-            state  <= H_DONE;
+            // Not up yet.  Hold the I/O cycle -- io_wait is already asserted --
+            // and let the card finish coming up.  The watchdog below ends it
+            // if the card never does.
+            state <= H_GO;
           end else if (cmd == CMD_READ) begin
             sd_lba      <= UNIT_STRIDE * 32'(unit[0]) + 32'(hdsk_lba);
             sd_start_rd <= 1'b1;
@@ -179,7 +209,7 @@ module hdsk #(
         H_SD_RD: begin
           if (!sd_busy) begin
             if (sd_err) begin
-              status <= 8'd1;
+              status <= sd_dbg;             // Cx = the card's R1 on CMD17
               state  <= H_DONE;
             end else begin
               cnt         <= 10'd0;
@@ -245,7 +275,10 @@ module hdsk #(
 
         H_SD_WR: begin
           if (!sd_busy) begin
-            status <= sd_err ? 8'd1 : 8'd0;
+            // On failure hand back what the card actually said rather than a
+            // bare 1: RomWBW only cares that it is non-zero, and it is the
+            // difference between guessing and knowing.
+            status <= sd_err ? sd_dbg : 8'd0;
             state  <= H_DONE;
           end
         end
@@ -260,13 +293,51 @@ module hdsk #(
         default: state <= H_IDLE;
       endcase
 
+      // The watchdog.  After the case so that it wins: whatever the command
+      // was about to do next, it has run out of time.  The status says where.
+      // Waiting on the card reports sd_spi's state (E0+state) because that is
+      // the part that did not answer; anything else reports this machine's
+      // (80+state), and the two ranges do not overlap.
+      if (state != H_IDLE && state != H_DONE) begin
+        if (tmo == 27'd0) begin
+          status  <= {4'h8, 4'(state)};        // where this controller stopped
+          status2 <= {3'b111, sd_dbg_state};   // what the card machine was doing
+          state   <= H_DONE;
+        end else begin
+          tmo <= tmo - 1'b1;
+        end
+      end
+
       // An IN while a command is pending starts the transfer and stalls the
       // cycle until it is done.  io_wait is registered, and the core samples
       // wait_n at the strobe T-state, so it is asserted the moment the read
       // is seen and released only in H_DONE.
-      if (port_rd && port_hit && pending && state == H_IDLE) begin
-        io_wait <= 1'b1;
-        state   <= H_GO;
+      if (port_rd && port_hit) begin
+        if (pending && state == H_IDLE) begin
+          io_wait <= 1'b1;
+          state   <= H_GO;
+        end else if (state == H_PARM) begin
+          // A status read part way through a parameter block: one of its seven
+          // bytes never arrived.  Abort what was collected rather than leave
+          // the machine half fed, where the next command's first byte would
+          // finish this one and every command after it would be assembled from
+          // bytes belonging to the one before.  A single failed operation, and
+          // the caller retries, instead of a desync that never heals.
+          status  <= 8'h8F;
+          pending <= 1'b0;
+          io_wait <= 1'b1;
+          state   <= H_DONE;
+        end else if (state == H_IDLE) begin
+          // A status read with nothing outstanding.  Answering it from the
+          // status register would hand back the previous command's result --
+          // which is how an operation that never framed reports success and
+          // quietly does nothing.  Hand back the companion status instead: for
+          // a command that timed out that is what the card machine was doing,
+          // and otherwise it is 8E, meaning nothing was outstanding.
+          status  <= status2;
+          io_wait <= 1'b1;
+          state   <= H_DONE;
+        end
       end
     end
   end

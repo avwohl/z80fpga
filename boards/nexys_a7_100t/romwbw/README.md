@@ -73,43 +73,68 @@ internal failures were downstream of the placer being pushed around by it.
 stock `SBC_simh_std` ROM, enabled by `HDSKENABLE`, and had been enumerating two
 units that nothing answered for.
 
-Reading is verified on hardware — `STAT C:` under CP/M returns
-`Bytes Remaining On C: 8176k`, read off the card. **Writing is not yet
-working**: `CLRDIR C:` and `PIP` report success and nothing lands, so a
-directory written to the card reads back unchanged and CP/M then says
-`NO DIRECTORY SPACE` while `DIR C:` says `NO FILE` — the signature of a
-directory full of zeros rather than `E5`.
+Reading and writing both work at the controller level on hardware, verified
+byte for byte. **Disk access under RomWBW does not**: `CLRDIR C:` reports
+"Directory cleared" and nothing lands, and CP/M then says `NO DIRECTORY SPACE`
+while `DIR C:` says `NO FILE` — the signature of a directory of zeros rather
+than `E5`, which is what a blank card reads back as.
 
-What has been ruled out, so nobody repeats it:
+Note that a blank card makes a broken read indistinguishable from a working
+one: both hand back a sector of zeros. `STAT C:` reporting
+`Bytes Remaining On C: 8176k` was read as evidence that reads worked, and it is
+not — CP/M computes that from a directory of zeros. Reads are verified instead
+by writing a known pattern and reading it back past a buffer flush.
 
-- **The card layer works.** A hardware probe using this exact `sd_spi` module
-  writes a block and reads it back byte-correct: `R1 W00 D00` and the pattern
-  intact.
-- **The protocol and the DMA work in simulation**, including against the real
-  `ddr2_ram` with a behavioural AXI slave — `make test` runs both.
-- **Two real bugs were found and fixed** on the way, either of which would
-  have done it: the write path sent one CRC byte where the card expects two,
-  and `start_rd`/`start_wr` were one-cycle pulses whose completion was tested
-  as `!busy`, so a pulse the card layer did not happen to see reported success
-  having transferred nothing.
+What has been established, so nobody repeats it:
 
-That MMU theory has since been tested and is also wrong. `sim/tb_hdsk_soc.sv`
-runs the whole SoC with a real Z80 executing `sim/hdsk_test.z80`, which drives
-port `$FD` exactly as `hdsk.asm` does — a seven-byte block shifted out with
-`OTIR`, then one `IN` — and it passes, printing `W00 R00 A5A6A7A8 OK` after
-comparing all 512 bytes. That puts `OTIR`, the MMU translating the DMA address
-into a bank, `ddr2_ram` and the card layer in one loop, at a deliberately
-non-zero LBA (sector `12h`, track `0034h`, so `00003412`, since CP/M's
-directory is nowhere near sector 0 and a wrongly assembled high byte would read
-from 0 correctly and write elsewhere). The controller asks the card for exactly
-that LBA on both the write and the read.
+- **Writes reach the card.** A bare-metal probe on this exact board build —
+  81.25 MHz, the same MIG, RAM in DDR2, the same constraints, only the ROM
+  contents and the console ports differ — writes a sector, reads a *different*
+  sector to refill the controller's 512-byte buffer, reads the first one back
+  and compares all 512 bytes: `W00 F00 R00 A5A6A7A8 OK`, over and over. The
+  flushing read matters: without it the comparison is answered out of the
+  buffer the write just filled and passes whether or not anything ever reached
+  the card, which is how an earlier version of this probe passed while the card
+  was untouched.
+- **So the write path is not the problem**: not the card, not `sd_spi`, not
+  CMD24, not the DMA out of DDR2, not the MMU translating the DMA address.
+- **The fault is the command framing on port `$FD`.** Driving the controller by
+  hand from the CP/M TPA with `DDT` — the same seven-byte block and `IN` that
+  `hdsk.asm` issues — a command reproducibly loses one of its seven bytes. The
+  controller then sits half-fed, and the *next* command's first byte completes
+  the previous one, so every command after it is assembled from bytes belonging
+  to the one before. Operations report the previous command's status, which is
+  how `CLRDIR` says "Directory cleared" while nothing is written.
+- **Not the bank window**: the same test fails with buffers in the common bank
+  (`8000`+) and in the banked low window (`2000`+).
+- **Not interrupts**: it fails identically with `DI` around the sequence.
+- **Not reproducible in simulation.** `sim/tb_hdsk_soc.sv` runs the whole SoC
+  with a real Z80 driving `$FD` exactly as `hdsk.asm` does, now at `CPU_DIV=12`
+  so the clock-enable-gated strobes are exercised, with the blocks fetched from
+  DDR2 so `OTIR`'s reads take wait states, and with the three commands issued
+  back to back. It passes. Whatever loses the byte is not in that model.
 
-So every layer passes in simulation and the card layer passes on hardware, and
-the two together still fail on hardware. What is left is something simulation
-does not model: the real card's behaviour in the sequence RomWBW actually uses
-— many reads and then a write — rather than the isolated write-then-read both
-probes do. The next step is to instrument the hardware rather than reason about
-it: capture what the controller issues during a CP/M directory write.
+Two earlier conclusions in this file were wrong and are worth recording as
+traps. A timing measurement was taken on a build with no multicycle
+constraints, where 4801 of 7118 endpoints failed; nothing measured on it meant
+anything. And a probe reported failure for a week because it issued its first
+command microseconds after reset, while the card was still polling ACMD41 —
+`H_GO` now waits for the card instead of failing the command.
+
+What the controller does about it now, since the root cause is not found:
+
+- Every wait is bounded. `hdsk` times out a command rather than leaving
+  `io_wait` asserted with the CPU frozen behind it, and `sd_spi` times out any
+  state that stops changing — `S_WR_BUSY` previously had no limit at all.
+- A status read part way through a parameter block aborts it and reports `8F`,
+  so a lost byte costs one operation instead of desyncing the port for good.
+- A status read with nothing outstanding reports `8E` rather than handing back
+  the previous command's status, which is what made a command that never
+  framed report success.
+- The status codes say where it stopped: `8x` the controller's own state, `Cx`
+  a card state that genuinely stalled, `Ex` what the card machine was doing
+  when the controller gave up, `4x`/`Ax`/`Bx` the card's own R1 and data
+  responses. A second status read returns the companion code.
 
 Each unit is `UNIT_STRIDE` blocks apart on the card, 1 GiB, matching what the
 driver claims. Unit 0 starts at card block 0, so **writing to `C:` overwrites

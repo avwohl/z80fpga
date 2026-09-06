@@ -34,7 +34,7 @@ module tb_hdsk_soc;
 
   z80_soc #(
       .CLK_HZ    (CLK_HZ),
-      .CPU_DIV   (1),
+      .CPU_DIV   (12),
       .BAUD      (BAUD),
       .USE_HDSK  (1'b1),
       .USE_DDR2  (1'b1),
@@ -185,7 +185,7 @@ module tb_hdsk_soc;
         $finish;
       end
       begin
-        wait (nrx >= 20);                 // W..R.. + 8 hex + " OK"/" BAD" + CRLF
+        wait (nrx >= 28);                 // W..R.. + 8 hex + " OK"/" BAD" + CRLF
         repeat (DIV * 40) @(posedge clk);
         $display("\n---");
         $finish;

@@ -18,11 +18,23 @@ HDSK     equ 0FDh
 
 SRC      equ 09000h            ; what we send
 DST      equ 0A000h            ; where it comes back
+FLU      equ 0B000h            ; somewhere to put the flushing read
+BLK      equ 0B800h            ; the command blocks, copied into RAM
 
          org 0000h
 
 start:   di
          ld sp,0FFF0h
+
+         ; Run the whole test over and over.  The board prints once and halts
+         ; otherwise, and the console cannot be opened until the programmer has
+         ; let go of the cable -- by which time the one line is long gone.
+again:
+         ; A banner before anything touches the card.  Silence on the console
+         ; is otherwise ambiguous: it could be a hung disk command or a CPU
+         ; that never started, and those want opposite investigations.
+         ld hl,hello
+         call puts
 
          ; fill SRC with a recognisable 512-byte pattern
          ld hl,SRC
@@ -51,28 +63,59 @@ wipe:    ld (hl),a
          ld a,d
          jr nz,wipe
 
-         ; ---- write SRC to sector 0
+         ; ---- copy the command blocks into RAM before using them.  In ROM
+         ;      they are read without a wait state; in RAM every read of one
+         ;      can stall the core on the memory, which is the condition
+         ;      RomWBW's driver runs under and this test never did.
          ld hl,wcmd
+         ld de,BLK
+         ld bc,21
+cpblk:   ld a,(hl)
+         ld (de),a
+         inc hl
+         inc de
+         dec bc
+         ld a,b
+         or c
+         jr nz,cpblk
+
+         ; ---- the three commands back to back, with nothing between them
+         ;      but the store of the status.  Printing between them, which is
+         ;      what this used to do, leaves hundreds of T-states of console
+         ;      polling in the gap; RomWBW's driver has four instructions
+         ;      there, and that is the shape that fails on hardware.
+         ld hl,BLK
          ld b,7
          ld c,HDSK
          otir
          in a,(HDSK)
-         push af
+         ld (st1),a
+
+         ld hl,BLK+7
+         ld b,7
+         ld c,HDSK
+         otir
+         in a,(HDSK)
+         ld (st2),a
+
+         ld hl,BLK+14
+         ld b,7
+         ld c,HDSK
+         otir
+         in a,(HDSK)
+         ld (st3),a
+
          ld a,'W'
          call putc
-         pop af
+         ld a,(st1)
          call puthex
-
-         ; ---- read it back into DST
-         ld hl,rcmd
-         ld b,7
-         ld c,HDSK
-         otir
-         in a,(HDSK)
-         push af
+         ld a,'F'
+         call putc
+         ld a,(st2)
+         call puthex
          ld a,'R'
          call putc
-         pop af
+         ld a,(st3)
          call puthex
 
          ; ---- show the first four bytes that came back
@@ -105,11 +148,23 @@ cmp1:    ld a,(de)
 
          ld hl,okmsg
          call puts
-         halt
+         call delay
+         jp again
 
 bad:     ld hl,badmsg
          call puts
-         halt
+         call delay
+         jp again
+
+; about a second at 8.33 MHz, so the console shows a readable trickle
+delay:   ld de,2000
+dly1:    ld b,0
+dly2:    djnz dly2
+         dec de
+         ld a,d
+         or e
+         jr nz,dly1
+         ret
 
 ; ------------------------------------------------------------------ console
 putc:    push af
@@ -149,7 +204,12 @@ puthex1: and 0Fh
 ; CP/M's directory is nowhere near sector 0, and an LBA assembled wrongly in
 ; its high bytes would read correctly from 0 and write somewhere else.
 wcmd:    db 3, 0, 012h, 034h, 000h, 000h, 090h
+fcmd:    db 2, 0, 099h, 034h, 000h, 000h, 0B0h
 rcmd:    db 2, 0, 012h, 034h, 000h, 000h, 0A0h
 
+st1:     db 0
+st2:     db 0
+st3:     db 0
+hello:   db "HDSK", 0Dh, 0Ah, 0
 okmsg:   db " OK", 0Dh, 0Ah, 0
 badmsg:  db " BAD", 0Dh, 0Ah, 0

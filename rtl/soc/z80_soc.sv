@@ -240,6 +240,8 @@ module z80_soc #(
       logic [8:0] sdb_addr;
       logic [7:0] sdb_wdata, sdb_rdata;
       logic       sdb_we, sd_rd, sd_wr, sd_busy, sd_err, sd_rdy;
+      logic [7:0] sd_dbg;
+      logic [4:0] sd_dbg_state;
       logic [31:0] sd_lba;
 
       // The memory answers a DMA byte in one clock when it is block RAM and
@@ -258,12 +260,14 @@ module z80_soc #(
           // makes the twelve-cycle exception on them legitimate.  The reply is
           // still in time: io_wait rises one clock later, and the core does not
           // re-examine wait_n until its next enable tick, twelve clocks away.
-          .port_wr (port_wr && clk_en), .port_rd (port_rd && clk_en),
+          .port_wr (port_wr && clk_en), .port_active (port_wr),
+          .port_rd (port_rd && clk_en),
           .port_rdata (hdsk_rdata), .port_hit (hdsk_hit), .io_wait (hdsk_wait),
           .dma_req (dma_req), .dma_we (dma_we), .dma_addr (dma_addr),
           .dma_wdata (dma_wdata), .dma_rdata (dma_rdata), .dma_ack (dma_ack),
           .sd_start_rd (sd_rd), .sd_start_wr (sd_wr), .sd_lba (sd_lba),
           .sd_busy (sd_busy), .sd_err (sd_err), .sd_ready (sd_rdy),
+          .sd_dbg (sd_dbg), .sd_dbg_state (sd_dbg_state),
           .sd_buf_addr (sdb_addr), .sd_buf_wdata (sdb_wdata),
           .sd_buf_we (sdb_we), .sd_buf_rdata (sdb_rdata)
       );
@@ -271,7 +275,7 @@ module z80_soc #(
       sd_spi #(.CLK_HZ (CLK_HZ)) u_sd (
           .clk (clk), .rst_n (rst_n),
           .start_rd (sd_rd), .start_wr (sd_wr), .lba (sd_lba),
-          .busy (sd_busy), .err (sd_err), .ready (sd_rdy),
+          .busy (sd_busy), .err (sd_err), .ready (sd_rdy), .dbg (sd_dbg), .dbg_state (sd_dbg_state),
           .buf_addr (sdb_addr), .buf_wdata (sdb_wdata), .buf_we (sdb_we),
           .buf_rdata (sdb_rdata),
           .sd_sck (sd_sck), .sd_mosi (sd_mosi), .sd_miso (sd_miso),

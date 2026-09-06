@@ -46,6 +46,8 @@ module sd_spi #(
     input  logic [31:0] lba,
     output logic        busy,
     output logic        err,
+    output logic [7:0]  dbg,               // last thing the card said, for diagnosis
+    output logic [4:0]  dbg_state,         // where the state machine is
     output logic        ready,             // card initialised
 
     // 512-byte buffer, byte addressed, for whoever is moving the data
@@ -85,6 +87,7 @@ module sd_spi #(
   // ---------------------------------------------------------- SPI byte engine
   logic [DW-1:0] divcnt, divmax;
   logic          tick;
+
   assign tick = (divcnt == divmax);
   // Reset it.  Without this the counter is X in simulation forever, because
   // tick depends on divcnt and divcnt depends on tick -- and hardware hides
@@ -138,6 +141,18 @@ module sd_spi #(
   } state_t;
 
   state_t      state, after_cmd;
+  assign dbg_state = 5'(state);
+  // No state here may wait forever.  Every wait is on the card answering, and
+  // a card that stops answering -- in the middle of a write especially --
+  // would hold busy high for good, and the CPU is stalled behind that with
+  // nothing on the console to say why.  Give any single state a bounded life
+  // and fail the command instead.  2^25 clocks is about 400 ms at 81.25 MHz,
+  // longer than the 250 ms a card may take to program a block and far longer
+  // than any other wait here.  S_IDLE is exempt: waiting there is its job.
+  logic [24:0] stall;
+  state_t      state_q;
+  // dbg follows whatever most recently explained a failure: the R1 of the last
+  // command, or the data-response token of a write.
   logic [7:0]  cmd_idx, cmd_crc, r1;
   logic [31:0] cmd_arg, ocr;
   logic [2:0]  frame_i, ocr_i;
@@ -150,7 +165,8 @@ module sd_spi #(
 
   always_ff @(posedge clk) begin
     if (!rst_n) begin
-      state <= S_RESET; spi_go <= 1'b0; sd_cs <= 1'b1; mosi_byte <= 8'hFF;
+      state <= S_RESET; spi_go <= 1'b0; sd_cs <= 1'b1; mosi_byte <= 8'hFF; dbg <= 8'h00;
+      stall <= 25'd0; state_q <= S_RESET;
       divmax <= DW'(DIV_SLOW); busy <= 1'b1; err <= 1'b0; ready <= 1'b0;
       seq <= 5'd0; gap_i <= 8'd0; retry <= 16'd0; cnt <= 10'd0;
       cmd_idx <= 8'd0; cmd_arg <= 32'd0; cmd_crc <= 8'h95; frame_i <= 3'd0;
@@ -288,7 +304,7 @@ module sd_spi #(
 
         // ------------------------------------------------------------- read
         S_RD_TOKEN: begin
-          if (r1 != 8'h00) state <= S_ERR;
+          if (r1 != 8'h00) begin dbg <= {4'h4, r1[3:0]}; state <= S_ERR; end
           else if (!spi_busy && !spi_go) begin
             if (miso_byte == 8'hFE) begin
               cnt <= 10'd0; sd_bufa <= 9'd0; mosi_byte <= 8'hFF;
@@ -321,7 +337,7 @@ module sd_spi #(
 
         // ------------------------------------------------------------ write
         S_WR_TOKEN: begin
-          if (r1 != 8'h00) state <= S_ERR;
+          if (r1 != 8'h00) begin dbg <= {4'hA, r1[3:0]}; state <= S_ERR; end
           else if (!spi_busy && !spi_go) begin
             mosi_byte <= 8'hFE;               // start block token
             spi_go    <= 1'b1;
@@ -352,16 +368,36 @@ module sd_spi #(
         S_WR_RESP: begin
           if (!spi_busy && !spi_go) begin
             if ((miso_byte & 8'h11) == 8'h01) begin      // xxx0sss1
-              if ((miso_byte & 8'h0E) != 8'h04) state <= S_ERR;  // 010 = accepted
-              else begin retry <= 16'd0; mosi_byte <= 8'hFF; spi_go <= 1'b1; state <= S_WR_BUSY; end
-            end else if (retry == 16'd5000) state <= S_ERR;
+              if ((miso_byte & 8'h0E) != 8'h04) begin
+                dbg <= {4'hB, miso_byte[3:0]}; state <= S_ERR;   // 010 = accepted
+              end
+              else begin retry <= 16'd0; gap_i <= 8'd0; mosi_byte <= 8'hFF;
+                         spi_go <= 1'b1; state <= S_WR_BUSY; end
+            end else if (retry == 16'd5000) begin
+              dbg <= 8'hBF; state <= S_ERR;          // no data response at all
+            end
             else begin retry <= retry + 1'b1; mosi_byte <= 8'hFF; spi_go <= 1'b1; end
           end
         end
-        S_WR_BUSY: begin                       // card holds MISO low while busy
+        // The card pulls DO low while it programs, but not necessarily by the
+        // very next byte.  Checking for 0xFF straight away can therefore see
+        // the idle line before the card has taken it low, declare the write
+        // finished, and issue the next command into a card that is still
+        // writing -- which answers nothing, so the following command fails
+        // while the write itself reports success.
+        //
+        // So poll a minimum number of byte times before 0xFF is allowed to
+        // mean anything.  This was reasoned from the specification rather than
+        // measured: a behavioural card model that asserts busy immediately
+        // cannot show the difference, and no failure has been traced to it.
+        S_WR_BUSY: begin
           if (!spi_busy && !spi_go) begin
-            if (miso_byte == 8'hFF) begin gap_i <= 8'd0; after_cmd <= S_FINISH; state <= S_GAP; end
-            else begin mosi_byte <= 8'hFF; spi_go <= 1'b1; end
+            if (gap_i >= 8'd8 && miso_byte == 8'hFF) begin
+              gap_i <= 8'd0; after_cmd <= S_FINISH; state <= S_GAP;
+            end else begin
+              if (gap_i < 8'd255) gap_i <= gap_i + 1'b1;
+              mosi_byte <= 8'hFF; spi_go <= 1'b1;
+            end
           end
         end
 
@@ -370,6 +406,27 @@ module sd_spi #(
 
         default: state <= S_RESET;
       endcase
+
+      // The stall watchdog, after the case so that it wins.  A state that has
+      // not changed for its whole life has stopped waiting on the card and
+      // started hanging on it; report where and let the caller retry.  The
+      // code is the same E0+state the HDSK controller uses, so one encoding
+      // covers both layers.
+      state_q <= state;
+      if (state != state_q) begin
+        stall <= 25'd0;
+      end else if (state != S_IDLE) begin
+        if (stall == 25'h1FF_FFFF) begin
+          // C0+state, distinct from the E0+state the HDSK controller reports.
+          // The difference matters: this one means the state genuinely stopped
+          // changing, where E0 only means the controller's own timer expired
+          // while the card machine happened to be passing through here.
+          dbg   <= {3'b110, 5'(state)};
+          state <= S_ERR;
+        end else begin
+          stall <= stall + 1'b1;
+        end
+      end
     end
   end
 
