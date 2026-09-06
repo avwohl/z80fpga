@@ -69,6 +69,9 @@ nextpnr from the OSS CAD Suite, and `mingw32-make` on this machine (there is
 no plain `make`). `boards/qomu` is a note explaining why the core does not fit
 an EOS S3, not a build.
 
-No hardware has ever run this. The board flows are verified to a placed,
-routed, timing-closed bitstream and no further — say so rather than implying
-otherwise.
+No hardware has ever run this, and the Arty flow does not close timing. It
+routes and writes `z80fpga.bit`, but `report_timing_summary` says WNS
+-8.668 ns over 893 failing endpoints: the core advances on a `clk_en` tick
+one cycle in `CPU_DIV`, and the XDC has no multicycle exception saying so.
+Say that rather than implying otherwise — a bitstream is not a closed
+design.
