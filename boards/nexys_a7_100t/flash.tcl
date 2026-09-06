@@ -82,6 +82,16 @@ program_hw_devices $dev
 puts "==> erasing, programming and verifying (this takes a couple of minutes)"
 program_hw_cfgmem -hw_cfgmem $cfg
 
-puts "==> done. Power-cycle the board with JP1 on QSPI and it should come up running."
+# Put the real design back.  Programming the flash leaves the flash-programmer
+# helper loaded in the FPGA, which answers nothing: the console goes dead and
+# it looks for all the world as though the flashing broke the board.  It did
+# not -- the flash is written and a power cycle would come up fine -- but there
+# is no reason to leave it looking broken until then.
+puts "==> reloading $bit so the board is running the real design again"
+set_property PROGRAM.FILE $bit $dev
+program_hw_devices $dev
+
+puts "==> done. The board is running it now, and with JP1 on QSPI it will come"
+puts "    up running it after a power cycle too."
 close_hw_target
 close_hw_manager

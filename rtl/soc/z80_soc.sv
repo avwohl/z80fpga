@@ -261,7 +261,7 @@ module z80_soc #(
           // still in time: io_wait rises one clock later, and the core does not
           // re-examine wait_n until its next enable tick, twelve clocks away.
           .port_wr (port_wr && clk_en), .port_active (port_wr),
-          .port_rd (port_rd && clk_en),
+          .port_rd (port_rd && clk_en), .port_rd_active (port_rd),
           .port_rdata (hdsk_rdata), .port_hit (hdsk_hit), .io_wait (hdsk_wait),
           .dma_req (dma_req), .dma_we (dma_we), .dma_addr (dma_addr),
           .dma_wdata (dma_wdata), .dma_rdata (dma_rdata), .dma_ack (dma_ack),

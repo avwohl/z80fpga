@@ -73,68 +73,88 @@ internal failures were downstream of the placer being pushed around by it.
 stock `SBC_simh_std` ROM, enabled by `HDSKENABLE`, and had been enumerating two
 units that nothing answered for.
 
-Reading and writing both work at the controller level on hardware, verified
-byte for byte. **Disk access under RomWBW does not**: `CLRDIR C:` reports
-"Directory cleared" and nothing lands, and CP/M then says `NO DIRECTORY SPACE`
-while `DIR C:` says `NO FILE` — the signature of a directory of zeros rather
-than `E5`, which is what a blank card reads back as.
+Reading and writing both work, on hardware, from CP/M. `PIP C:=B:STAT.COM`
+copies a file to the card, `DIR C:` lists it, `STAT C:` shows the space gone,
+and after reconfiguring the FPGA the file is still there and runs from `C:` --
+which is as strong as this gets, since nothing survives reconfiguration except
+the card.
 
-Note that a blank card makes a broken read indistinguishable from a working
-one: both hand back a sector of zeros. `STAT C:` reporting
-`Bytes Remaining On C: 8176k` was read as evidence that reads worked, and it is
-not — CP/M computes that from a directory of zeros. Reads are verified instead
-by writing a known pattern and reading it back past a buffer flush.
+## The bug that made writes fail, and why it hid for so long
 
-What has been established, so nobody repeats it:
+The controller's wait reply arrived one clock too late to stall the read it
+belonged to.
 
-- **Writes reach the card.** A bare-metal probe on this exact board build —
-  81.25 MHz, the same MIG, RAM in DDR2, the same constraints, only the ROM
-  contents and the console ports differ — writes a sector, reads a *different*
-  sector to refill the controller's 512-byte buffer, reads the first one back
-  and compares all 512 bytes: `W00 F00 R00 A5A6A7A8 OK`, over and over. The
-  flushing read matters: without it the comparison is answered out of the
-  buffer the write just filled and passes whether or not anything ever reached
-  the card, which is how an earlier version of this probe passed while the card
-  was untouched.
-- **So the write path is not the problem**: not the card, not `sd_spi`, not
-  CMD24, not the DMA out of DDR2, not the MMU translating the DMA address.
-- **The fault is the command framing on port `$FD`.** Driving the controller by
-  hand from the CP/M TPA with `DDT` — the same seven-byte block and `IN` that
-  `hdsk.asm` issues — a command reproducibly loses one of its seven bytes. The
-  controller then sits half-fed, and the *next* command's first byte completes
-  the previous one, so every command after it is assembled from bytes belonging
-  to the one before. Operations report the previous command's status, which is
-  how `CLRDIR` says "Directory cleared" while nothing is written.
-- **Not the bank window**: the same test fails with buffers in the common bank
-  (`8000`+) and in the banked low window (`2000`+).
-- **Not interrupts**: it fails identically with `DI` around the sequence.
-- **Not reproducible in simulation.** `sim/tb_hdsk_soc.sv` runs the whole SoC
-  with a real Z80 driving `$FD` exactly as `hdsk.asm` does, now at `CPU_DIV=12`
-  so the clock-enable-gated strobes are exercised, with the blocks fetched from
-  DDR2 so `OTIR`'s reads take wait states, and with the three commands issued
-  back to back. It passes. Whatever loses the byte is not in that model.
+`port_rd` was gated by `clk_en`, and `clk_en` is high only in the *last* clock
+of a T-state -- the same edge on which the core tests `wait_n`, latches the
+data bus and leaves the strobe T-state. `io_wait` was a register, so it rose
+one clock after that. The core therefore saw `wait_n` still high, took whatever
+was in the status register *before* the controller had run, and moved on. Two
+things followed, and both of them look like something else:
 
-Two earlier conclusions in this file were wrong and are worth recording as
-traps. A timing measurement was taken on a build with no multicycle
-constraints, where 4801 of 7118 endpoints failed; nothing measured on it meant
-anything. And a probe reported failure for a week because it issued its first
-command microseconds after reset, while the card was still polling ACMD41 —
-`H_GO` now waits for the card instead of failing the command.
+- **Every status read answered the read before it.** A command's real result
+  was handed to the *next* `IN`. Since a successful status is 0 and the reset
+  value of the register is also 0, this is invisible until something fails --
+  and then the failure is reported against the wrong command.
+- **The transfer was not actually stalled.** The stall landed on the following
+  bus cycle instead, freezing an M1 fetch with `mreq_n` low while the DMA moved
+  `mem_addr` out from under it.
 
-What the controller does about it now, since the root cause is not found:
+The fix is that `io_wait` is combinational and held for the whole read cycle
+until there is something true to hand back, with an independent backstop so
+that no path through the state machine can leave the CPU frozen.
 
-- Every wait is bounded. `hdsk` times out a command rather than leaving
-  `io_wait` asserted with the CPU frozen behind it, and `sd_spi` times out any
-  state that stops changing — `S_WR_BUSY` previously had no limit at all.
+`sim/hdsk_test.z80` now checks this directly: after its three commands it reads
+the status port once more with nothing outstanding, which must return `8E`. If
+the wait is late it returns the previous command's `00` instead. That one byte
+is the difference between a test that catches this and one that cannot.
+
+## Measurement traps this cost, all of them mine
+
+Four separate "results" in the earlier version of this file were artefacts.
+They are recorded because each one sent the investigation somewhere wrong.
+
+- **A timing measurement taken on a build with no multicycle constraints**,
+  where 4801 of 7118 endpoints failed. Nothing measured on it meant anything.
+- **A probe that reported failure because it ran too early.** It issued its
+  first command microseconds after reset, while the card was still polling
+  ACMD41. `H_GO` now waits for the card instead of failing the command.
+- **A probe that reported silence because the console moved.** This build puts
+  the console on RomWBW's SSER ports, `0x6D`/`0x68`; the test program wrote to
+  `0x00`/`0x01`. That was briefly read as a DDR2 fault.
+- **A probe whose status bytes were `db` labels in the ROM image.** Every
+  `ld (st1),a` went nowhere and every `ld a,(st1)` read the ROM's zero back,
+  which prints as a perfectly plausible `status 00` whatever the controller
+  said. They live in RAM now.
+
+And one about the card rather than the design: on a blank card a broken read is
+indistinguishable from a working one, because both hand back a sector of zeros.
+`STAT C:` reporting `8176k` was taken as evidence that reads worked and is not
+-- CP/M computes that from a directory of zeros. Reads are only really verified
+by writing a known pattern and reading it back past a buffer flush, which is
+what `sim/hdsk_test.z80` does: it reads a *different* sector between the write
+and the read-back, because without that the comparison is answered out of the
+controller's own 512-byte buffer and passes whether or not anything reached the
+card.
+
+## What the controller does when something does go wrong
+
+- Every wait is bounded. `hdsk` times out a command rather than leaving the CPU
+  frozen behind it, `sd_spi` times out any state that stops changing -- with
+  `S_WR_BUSY` previously having no limit at all -- and the stall itself has a
+  backstop independent of both.
 - A status read part way through a parameter block aborts it and reports `8F`,
-  so a lost byte costs one operation instead of desyncing the port for good.
-- A status read with nothing outstanding reports `8E` rather than handing back
-  the previous command's status, which is what made a command that never
-  framed report success.
-- The status codes say where it stopped: `8x` the controller's own state, `Cx`
-  a card state that genuinely stalled, `Ex` what the card machine was doing
-  when the controller gave up, `4x`/`Ax`/`Bx` the card's own R1 and data
-  responses. A second status read returns the companion code.
+  so a lost byte would cost one operation instead of desyncing the port.
+- A status read with nothing outstanding reports `8E` rather than the previous
+  command's status.
+- The codes say where it stopped: `8x` the controller's own state, `Cx` a card
+  state that genuinely stalled, `Ex` what the card machine was doing when the
+  controller gave up, `4x`/`Ax`/`Bx` the card's own R1 and data responses.
+- Port `0xFC` reads the strobe counters: write 0-3 to it, read it back, and get
+  the number of writes to the command port that were accepted, that were
+  dropped because the previous one had not been retired, that arrived while no
+  case arm was collecting, and the controller's state. Those three account for
+  every strobe that reaches the port, which is how "a byte of the block is
+  going missing" was ruled out: they rose by exactly seven per command.
 
 Each unit is `UNIT_STRIDE` blocks apart on the card, 1 GiB, matching what the
 driver claims. Unit 0 starts at card block 0, so **writing to `C:` overwrites

@@ -122,11 +122,11 @@ What has and has not run, kept honest: the Nexys A7-100T boots RomWBW's HBIOS
 and CP/M 2.2 on real silicon, off a bitstream in the board's QSPI flash. The
 Arty and C0-microSD builds are verified to a placed, routed, timing-closed
 bitstream and no further, because neither board was ever attached. The
-SD-backed disks read *and* write on hardware at the controller level, verified
-byte for byte against the card; but disk access from RomWBW itself still fails,
-because the seven-byte command block on port `$FD` can lose a byte and desync.
-[boards/nexys_a7_100t/romwbw](boards/nexys_a7_100t/romwbw/) says exactly what
-is established and what is not.
+SD-backed disks read *and* write: CP/M copies a file to `C:`, and after
+reconfiguring the FPGA the file is still there and runs from the card.
+[boards/nexys_a7_100t/romwbw](boards/nexys_a7_100t/romwbw/) has the bug that
+made writes fail -- a wait reply one clock too late to stall the read it
+belonged to -- and the measurement traps it cost along the way.
 
 ## Licence
 

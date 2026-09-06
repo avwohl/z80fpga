@@ -146,7 +146,8 @@ module tb_hdsk;
       .port_addr (8'hFD), .port_wdata (port_wdata),
       // port_active is the whole I/O cycle, ungated; here the strobe is one
       // clock and is the whole of it.
-      .port_wr (port_wr), .port_active (port_wr), .port_rd (port_rd),
+      .port_wr (port_wr), .port_active (port_wr),
+      .port_rd (port_rd), .port_rd_active (port_rd),
       .port_rdata (port_rdata), .port_hit (port_hit), .io_wait (io_wait),
       .dma_req (dma_req), .dma_we (dma_we), .dma_addr (dma_addr),
       .dma_wdata (dma_wdata), .dma_rdata (dma_rdata), .dma_ack (dma_ack),

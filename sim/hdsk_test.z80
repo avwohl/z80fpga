@@ -20,6 +20,14 @@ SRC      equ 09000h            ; what we send
 DST      equ 0A000h            ; where it comes back
 FLU      equ 0B000h            ; somewhere to put the flushing read
 BLK      equ 0B800h            ; the command blocks, copied into RAM
+; The status bytes have to live in RAM.  As `db` in the source they sat in the
+; ROM image, so `ld (ST1),a` went nowhere and `ld a,(ST1)` read the ROM's zero
+; back -- which prints as a perfectly plausible "status 00" no matter what the
+; controller actually said.
+ST1      equ 0B900h
+ST2      equ 0B901h
+ST3      equ 0B902h
+ST4      equ 0B903h
 
          org 0000h
 
@@ -89,33 +97,46 @@ cpblk:   ld a,(hl)
          ld c,HDSK
          otir
          in a,(HDSK)
-         ld (st1),a
+         ld (ST1),a
 
          ld hl,BLK+7
          ld b,7
          ld c,HDSK
          otir
          in a,(HDSK)
-         ld (st2),a
+         ld (ST2),a
 
          ld hl,BLK+14
          ld b,7
          ld c,HDSK
          otir
          in a,(HDSK)
-         ld (st3),a
+         ld (ST3),a
+
+         ; One more read with nothing outstanding.  It has to come back 8E.
+         ; If it comes back as the previous command's status instead, the
+         ; controller's wait is arriving too late to stall the cycle it belongs
+         ; to and every status read is answering the read before it -- which is
+         ; invisible whenever the statuses happen to be equal, so check it here
+         ; where they are not.
+         in a,(HDSK)
+         ld (ST4),a
 
          ld a,'W'
          call putc
-         ld a,(st1)
+         ld a,(ST1)
          call puthex
          ld a,'F'
          call putc
-         ld a,(st2)
+         ld a,(ST2)
          call puthex
          ld a,'R'
          call putc
-         ld a,(st3)
+         ld a,(ST3)
+         call puthex
+         ld a,'S'
+         call putc
+         ld a,(ST4)
          call puthex
 
          ; ---- show the first four bytes that came back
@@ -207,9 +228,6 @@ wcmd:    db 3, 0, 012h, 034h, 000h, 000h, 090h
 fcmd:    db 2, 0, 099h, 034h, 000h, 000h, 0B0h
 rcmd:    db 2, 0, 012h, 034h, 000h, 000h, 0A0h
 
-st1:     db 0
-st2:     db 0
-st3:     db 0
 hello:   db "HDSK", 0Dh, 0Ah, 0
 okmsg:   db " OK", 0Dh, 0Ah, 0
 badmsg:  db " BAD", 0Dh, 0Ah, 0

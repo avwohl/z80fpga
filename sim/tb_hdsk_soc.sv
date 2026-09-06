@@ -185,7 +185,7 @@ module tb_hdsk_soc;
         $finish;
       end
       begin
-        wait (nrx >= 28);                 // W..R.. + 8 hex + " OK"/" BAD" + CRLF
+        wait (nrx >= 31);                 // W..R.. + 8 hex + " OK"/" BAD" + CRLF
         repeat (DIV * 40) @(posedge clk);
         $display("\n---");
         $finish;

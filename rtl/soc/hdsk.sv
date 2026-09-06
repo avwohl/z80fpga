@@ -37,6 +37,9 @@
 
 module hdsk #(
     parameter logic [7:0]  PORT      = 8'hFD,
+    // A window on the strobe counters, for finding out where a byte of a
+    // parameter block went.  Write the index, read the counter.
+    parameter logic [7:0]  DBG_PORT  = 8'hFC,
     // Where each unit lives on the card, in 512-byte blocks. A gap of 2^21
     // blocks is 1 GiB, which is what the driver claims each unit is.
     parameter logic [31:0] UNIT_STRIDE = 32'h0020_0000
@@ -49,9 +52,18 @@ module hdsk #(
     input  logic [7:0]  port_wdata,
     input  logic        port_wr,     // strobe, gated by clk_en
     input  logic        port_active, // the same cycle, ungated: high all of it
-    input  logic        port_rd,
+    input  logic        port_rd,        // strobe, gated by clk_en
+    input  logic        port_rd_active, // the same cycle, ungated
     output logic [7:0]  port_rdata,
     output logic        port_hit,
+    // Held for the whole read cycle, combinationally.  It cannot be registered
+    // off the clk_en-gated strobe: clk_en is high only in the last clock of a
+    // T-state, which is the very edge on which the core tests wait_n, latches
+    // the data bus and leaves the strobe T-state.  A registered reply rises
+    // one clock after that, too late to stall the cycle it belongs to -- the
+    // core takes the previous contents of the status register and runs on, and
+    // the stall lands on the next bus cycle instead, freezing an M1 fetch with
+    // mreq_n low while the DMA moves mem_addr out from under it.
     output logic        io_wait,          // hold the I/O cycle
 
     // memory master, in Z80 address space; the MMU maps it
@@ -82,7 +94,7 @@ module hdsk #(
   localparam logic [7:0] CMD_READ  = 8'd2;
   localparam logic [7:0] CMD_WRITE = 8'd3;
 
-  assign port_hit = (port_addr == PORT);
+  assign port_hit = (port_addr == PORT) || (port_addr == DBG_PORT);
 
   typedef enum logic [3:0] {
     H_IDLE, H_PARM, H_GO, H_SD_RD_GO, H_SD_RD, H_DMA_WR_PRE, H_DMA_WR,
@@ -115,7 +127,33 @@ module hdsk #(
   logic [7:0]  status2;
   logic        pending;
 
+  // Counters that split the lost-byte question three ways.  A byte of a
+  // parameter block goes missing under RomWBW and not under a bare-metal
+  // probe, and there are only three places it can go: the strobe arrived and
+  // 'taken' swallowed it, the strobe arrived while this machine was busy
+  // elsewhere and no case arm was listening, or it never arrived at all.
+  // These say which, and successive status reads hand them back.
+  logic [7:0]  n_drop;      // seen, but taken was still set
+  logic [7:0]  n_busy;      // seen, but not in a state that collects bytes
+  logic [7:0]  n_ok;        // accepted
+  // They are read from their own port, DBG_PORT, rather than from the command
+  // port: a read of the command port runs through the state machine, and the
+  // extra reads needed to walk four counters disturbed the very thing being
+  // measured.  This port is combinational and touches nothing.
+  logic [1:0]  dbg_i;
+  logic        rd_seen;    // this read cycle has been acted on
+  logic        rd_done;    // ... and the answer is in `status`
+  // A backstop on the stall itself.  The command watchdog bounds how long the
+  // state machine may take, but it only helps if every path out of it reaches
+  // H_DONE and sets rd_done; if any does not, the CPU is frozen for good with
+  // nothing to show for it.  Nothing this module does may be able to do that,
+  // so time out the stall independently of the state machine.
+  logic [27:0] wait_tmo;
+
   wire [23:0] hdsk_lba = {trk_hi, trk_lo, sec};
+
+  wire cmd_hit = (port_addr == PORT);
+  wire dbg_hit = (port_addr == DBG_PORT);
 
   always_ff @(posedge clk) begin
     if (!rst_n) begin
@@ -124,24 +162,36 @@ module hdsk #(
       trk_lo <= 8'd0; trk_hi <= 8'd0; dma_lo <= 8'd0; dma_hi <= 8'd0;
       parm_i <= 3'd0; cnt <= 10'd0; status <= 8'd0; pending <= 1'b0; taken <= 1'b0;
       status2 <= 8'h8E;
+      n_drop <= 8'd0; n_busy <= 8'd0; n_ok <= 8'd0; dbg_i <= 2'd0;
+      rd_seen <= 1'b0; rd_done <= 1'b0; wait_tmo <= 28'd0;
       tmo <= 27'd0;
       dma_req <= 1'b0; dma_we <= 1'b0; dma_addr <= 16'd0; dma_wdata <= 8'd0;
       sd_start_rd <= 1'b0; sd_start_wr <= 1'b0; sd_lba <= 32'd0;
       sd_buf_addr <= 9'd0; sd_buf_wdata <= 8'd0; sd_buf_we <= 1'b0;
-      io_wait     <= 1'b0;
     end else begin
       sd_start_rd <= 1'b0;
       sd_start_wr <= 1'b0;
       sd_buf_we   <= 1'b0;
       if (!port_active) taken <= 1'b0;
+      // Selected by writing the index, not by advancing on read: an index that
+      // advances on each read drifts the moment a read is seen twice, which is
+      // exactly the sort of fault being measured, and then every counter is
+      // read from the wrong place.
+      if (port_wr && dbg_hit) dbg_i <= port_wdata[1:0];
+
+      // Count every strobe aimed at this port, by what became of it.
+      if (port_wr && cmd_hit) begin
+        if (taken)                                     n_drop <= n_drop + 1'b1;
+        else if (state != H_IDLE && state != H_PARM)   n_busy <= n_busy + 1'b1;
+        else                                           n_ok   <= n_ok   + 1'b1;
+      end
 
       case (state)
         // -------------------------------------------------- collect a command
         H_IDLE: begin
-          io_wait <= 1'b0;
           dma_req <= 1'b0;
           tmo     <= 27'h7FF_FFFF;    // reloaded here, spent by the command
-          if (port_wr && port_hit && !taken) begin
+          if (port_wr && cmd_hit && !taken) begin
             taken <= 1'b1;
             case (port_wdata)
               CMD_READ, CMD_WRITE: begin
@@ -160,7 +210,7 @@ module hdsk #(
         end
 
         H_PARM: begin
-          if (port_wr && port_hit && !taken) begin
+          if (port_wr && cmd_hit && !taken) begin
             taken <= 1'b1;
             case (parm_i)
               3'd0: unit   <= port_wdata;
@@ -285,7 +335,7 @@ module hdsk #(
 
         H_DONE: begin
           pending <= 1'b0;
-          io_wait <= 1'b0;
+          rd_done <= 1'b1;              // the answer is in `status` now
           dma_req <= 1'b0;
           state   <= H_IDLE;
         end
@@ -308,41 +358,85 @@ module hdsk #(
         end
       end
 
-      // An IN while a command is pending starts the transfer and stalls the
-      // cycle until it is done.  io_wait is registered, and the core samples
-      // wait_n at the strobe T-state, so it is asserted the moment the read
-      // is seen and released only in H_DONE.
-      if (port_rd && port_hit) begin
+      // A read of the command port.  The whole cycle is stalled, from its
+      // first clock until there is something true to hand back, so that the
+      // core samples the answer to *this* read rather than the previous one.
+      if (!port_rd_active) begin
+        rd_seen  <= 1'b0;
+        rd_done  <= 1'b0;
+        wait_tmo <= 28'h7FF_FFFF;       // ~1.6 s at 81.25 MHz
+      end else if (io_wait) begin
+        // Stalling.  If this ever runs out, some path out of the state machine
+        // failed to answer; say so rather than leave the machine dead.
+        if (wait_tmo == 28'd0) begin
+          status  <= 8'h8D;
+          status2 <= {4'h8, 4'(state)};
+          rd_done <= 1'b1;
+        end else begin
+          wait_tmo <= wait_tmo - 1'b1;
+        end
+      end
+
+      if (port_rd_active && cmd_hit && !rd_seen) begin
+        rd_seen <= 1'b1;
         if (pending && state == H_IDLE) begin
-          io_wait <= 1'b1;
-          state   <= H_GO;
+          state <= H_GO;                // rd_done follows in H_DONE
         end else if (state == H_PARM) begin
           // A status read part way through a parameter block: one of its seven
           // bytes never arrived.  Abort what was collected rather than leave
           // the machine half fed, where the next command's first byte would
           // finish this one and every command after it would be assembled from
-          // bytes belonging to the one before.  A single failed operation, and
-          // the caller retries, instead of a desync that never heals.
+          // bytes belonging to the one before.
           status  <= 8'h8F;
           pending <= 1'b0;
-          io_wait <= 1'b1;
-          state   <= H_DONE;
+          rd_done <= 1'b1;
+          state   <= H_IDLE;
         end else if (state == H_IDLE) begin
-          // A status read with nothing outstanding.  Answering it from the
-          // status register would hand back the previous command's result --
-          // which is how an operation that never framed reports success and
-          // quietly does nothing.  Hand back the companion status instead: for
-          // a command that timed out that is what the card machine was doing,
-          // and otherwise it is 8E, meaning nothing was outstanding.
+          // Nothing outstanding.  Answering from the status register would
+          // hand back the previous command's result, which is how an operation
+          // that never framed reports success.
           status  <= status2;
-          io_wait <= 1'b1;
-          state   <= H_DONE;
+          rd_done <= 1'b1;
         end
       end
+
+      // The watchdog.  After the case so that it wins: whatever the command
+      // was about to do next, it has run out of time.  The status says where.
+      // Waiting on the card reports sd_spi's state (E0+state) because that is
+      // the part that did not answer; anything else reports this machine's
+      // (80+state), and the two ranges do not overlap.
+      if (state != H_IDLE && state != H_DONE) begin
+        if (tmo == 27'd0) begin
+          status  <= {4'h8, 4'(state)};        // where this controller stopped
+          status2 <= {3'b111, sd_dbg_state};   // what the card machine was doing
+          state   <= H_DONE;
+        end else begin
+          tmo <= tmo - 1'b1;
+        end
+      end
+
     end
   end
 
-  assign port_rdata = status;
+  // The command port hands back the status; the debug port walks the counters,
+  // so four reads of it give: strobes accepted, strobes dropped because 'taken'
+  // was still set, strobes seen while no case arm was collecting, and the
+  // controller's own state.  Between them those say where a missing byte went.
+  logic [7:0] dbg_val;
+  always_comb begin
+    case (dbg_i)
+      2'd0:    dbg_val = n_ok;
+      2'd1:    dbg_val = n_drop;
+      2'd2:    dbg_val = n_busy;
+      default: dbg_val = {4'h0, 4'(state)};
+    endcase
+  end
+
+  assign port_rdata = (port_addr == DBG_PORT) ? dbg_val : status;
+
+  // Combinational, and asserted for the whole of the read cycle: see the port
+  // declaration for why this cannot be a register.
+  assign io_wait = port_rd_active && cmd_hit && !rd_done;
 
   // Everything the DMA touches is a byte in Z80 space; the SoC maps it.
   // dma_req is dropped in H_DONE so the memory returns to the CPU.
