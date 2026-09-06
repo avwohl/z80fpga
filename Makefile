@@ -45,6 +45,24 @@ sim/tb_soc.vvp: sim/tb_soc.sv $(SOC) $(GEN) sw/boot.hex
 sim/tb_irq.vvp: sim/tb_irq.sv $(CORE) $(GEN)
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_irq.sv $(CORE)
 
+# Boot a stock RomWBW ROM.  The image is not in the repository; ROMWBW_ROM
+# points at one, the way Z80_TESTS points at the opcode suite:
+#
+#   make romwbw ROMWBW_ROM=path/to/SBC_simh_std.rom
+#
+# Takes a few minutes: the loader prompt is about 8.6 M clocks in.
+ROMWBW_ROM ?=
+
+sim/romwbw64k.hex:
+	@test -n "$(ROMWBW_ROM)" || 	  (echo "set ROMWBW_ROM=path/to/a/RomWBW .rom image" && false)
+	$(PYTHON) tools/mkromhex.py $(ROMWBW_ROM) $@ --size 65536
+
+sim/tb_romwbw.vvp: sim/tb_romwbw.sv $(SOC) $(GEN)
+	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_romwbw.sv $(SOC)
+
+romwbw: sim/tb_romwbw.vvp sim/romwbw64k.hex
+	$(VVP) sim/tb_romwbw.vvp
+
 test: sim
 	$(PYTHON) tools/test_zasm.py
 	$(VVP) sim/tb_irq.vvp

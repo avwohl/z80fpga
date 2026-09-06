@@ -1,8 +1,24 @@
-// 8N1 UART with the two-port interface the avwohl Z80 emulators present:
+// 8N1 UART with one of two port interfaces, chosen by CONSOLE_SSER.
+//
+// CONSOLE_SSER = 0, the interface the avwohl Z80 emulators present:
 //
 //   port 0x00  read   bit 0 = a received byte is waiting, bit 1 = TX is idle
 //   port 0x01  read   take the received byte
 //              write  send a byte
+//
+// CONSOLE_SSER = 1, RomWBW's SSER device, which is what a stock RomWBW ROM
+// drives.  The driver in SBC_simh_std.rom tests the status with `E6 01` for
+// receive and `E6 20` for transmit, so the ready bits are 0 and 5 rather than
+// 0 and 1, and the data port moves:
+//
+//   port 0x6D  read   bit 0 = a received byte is waiting, bit 5 = TX is idle
+//   port 0x68  read   take the received byte
+//              write  send a byte
+//
+// The two are deliberately exclusive rather than aliased.  HBIOS probes port
+// 0x00 while hunting for devices and treats a stable non-0xFF answer as one
+// being present, so leaving the emulator ports decoded in a RomWBW build
+// invents a console that is not there.
 //
 // RX_DEPTH bytes of receive buffering.  A single byte is not enough: a Z80
 // echo loop that has to wait for its own transmitter can be a couple of
@@ -13,9 +29,10 @@
 `define UART_SV
 
 module uart #(
-    parameter int CLK_HZ   = 50_000_000,
-    parameter int BAUD     = 115200,
-    parameter int RX_DEPTH = 16
+    parameter int CLK_HZ       = 50_000_000,
+    parameter int BAUD         = 115200,
+    parameter int RX_DEPTH     = 16,
+    parameter bit CONSOLE_SSER = 1'b0    // 1: RomWBW SSER at 0x68/0x6D
 ) (
     input  logic       clk,
     input  logic       rst_n,
@@ -30,6 +47,9 @@ module uart #(
     input  logic       rx,
     output logic       tx
 );
+
+  localparam logic [7:0] STAT_PORT = CONSOLE_SSER ? 8'h6D : 8'h00;
+  localparam logic [7:0] DATA_PORT = CONSOLE_SSER ? 8'h68 : 8'h01;
 
   localparam int DIV = CLK_HZ / BAUD;
   localparam int DW  = $clog2(DIV);
@@ -50,7 +70,7 @@ module uart #(
       tx_div  <= '0;
       tx_bit  <= 4'd0;
     end else if (!tx_busy) begin
-      if (port_wr && port_addr == 8'h01) begin
+      if (port_wr && port_addr == DATA_PORT) begin
         tx_sr   <= {1'b1, port_wdata, 1'b0};   // stop, data, start
         tx_busy <= 1'b1;
         tx_div  <= '0;
@@ -90,7 +110,7 @@ module uart #(
       wptr    <= '0;
       rptr    <= '0;
     end else begin
-      if (port_rd && port_addr == 8'h01 && rx_ready) rptr <= rptr + 1'b1;
+      if (port_rd && port_addr == DATA_PORT && rx_ready) rptr <= rptr + 1'b1;
 
       if (!rx_busy) begin
         if (!rx_sync[1]) begin                 // start bit edge
@@ -117,9 +137,10 @@ module uart #(
   end
 
   // ------------------------------------------------------------------ ports
-  assign port_hit   = (port_addr == 8'h00) || (port_addr == 8'h01);
-  assign port_rdata = (port_addr == 8'h00)
-                    ? {6'd0, ~tx_busy, rx_ready}
+  assign port_hit   = (port_addr == STAT_PORT) || (port_addr == DATA_PORT);
+  assign port_rdata = (port_addr == STAT_PORT)
+                    ? (CONSOLE_SSER ? {2'd0, ~tx_busy, 4'd0, rx_ready}
+                                    : {6'd0, ~tx_busy, rx_ready})
                     : fifo[rptr[FW-1:0]];
 
 endmodule

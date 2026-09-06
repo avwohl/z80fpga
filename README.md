@@ -42,8 +42,10 @@ from HALT, each checked against the databook's T-state count.
 `docs/architecture.md` explains how the microcode engine works,
 `docs/verification.md` how it is tested, `docs/memory_banking.md` the bank map,
 and `docs/roadmap.md` what the Z180 and eZ80 need.
-`docs/vivado_license.md` is for the Arty build: what the free Vivado licence is
+`docs/vivado_license.md` is for the Vivado builds: what the free licence is
 called since 2026.1 renamed it, and how to get one.
+`docs/romwbw.md` is how a stock RomWBW ROM boots on this core — it reaches the
+loader prompt in simulation — and what the console has to look like for that.
 
 ## Getting the tools
 

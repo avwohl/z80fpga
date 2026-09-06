@@ -18,6 +18,7 @@ module z80_soc #(
     parameter int CLK_HZ    = 100_000_000,
     parameter int CPU_DIV   = 25,           // 100 MHz / 25 = 4 MHz Z80
     parameter int BAUD      = 115200,
+    parameter bit CONSOLE_SSER = 1'b0,      // 1: RomWBW SSER console at 0x68/0x6D
     parameter int ROM_BANKS = 1,            // x 32 KB
     parameter int RAM_BANKS = 2,
     // Backing store size, as an address width.  Defaults to the whole bank
@@ -115,7 +116,7 @@ module z80_soc #(
   logic [7:0] uart_rdata;
   logic       uart_hit;
 
-  uart #(.CLK_HZ (CLK_HZ), .BAUD (BAUD)) u_uart (
+  uart #(.CLK_HZ (CLK_HZ), .BAUD (BAUD), .CONSOLE_SSER (CONSOLE_SSER)) u_uart (
       .clk (clk), .rst_n (rst_n),
       .port_addr (a[7:0]), .port_wdata (dout),
       .port_wr (port_wr && clk_en), .port_rd (port_rd && clk_en),
