@@ -1,6 +1,7 @@
 # z80fpga
 
-A Zilog Z80 in SystemVerilog, with RomWBW-compatible banked memory.
+A Zilog Z80 in SystemVerilog, with RomWBW-compatible banked memory. It boots
+RomWBW and CP/M 2.2 on a Digilent Nexys A7-100T.
 
 The core is **microcoded**: `tools/gen_z80.py` describes the instruction set in
 Python and emits the micro-program ROM, the opcode dispatch tables and the
@@ -104,17 +105,38 @@ across the cycle the way the real part drives an external bus.
 
 ## Boards
 
-- **[Arty A7-100T](boards/arty_a7_100t/)** — the primary target. 8.33 MHz Z80,
-  64 KB ROM and 256 KB RAM in block RAM, console on the on-board USB-UART.
+- **[Nexys A7-100T](boards/nexys_a7_100t/)** — the one that has run. RomWBW
+  and CP/M 2.2, with 512 KB of ROM in block RAM and 512 KB of RAM in DDR2;
+  console on the on-board USB-UART. `romwbw/` is that build, `ddr2/` the
+  memory bring-up.
+- **[Arty A7-100T](boards/arty_a7_100t/)** — same part, different pinout.
+  8.33 MHz Z80, 64 KB ROM and 256 KB RAM in block RAM. Timing-closed but never
+  run: no Arty was ever attached.
 - **[Signaloid C0-microSD](boards/c0_microsd/)** — fits, at 94% of the
   UP5K's logic. 128 KB of RAM in the four SPRAM blocks, an 8 KB boot ROM,
   console on the SD breakout pins.
 - **[Qomu](boards/qomu/)** — does not fit, and cannot. The note explains why
   and what the board is good for instead.
 
-No hardware was available while this was written, so the board builds are
-verified only to the point of a placed and routed bitstream. What runs in
-simulation is the SoC, end to end.
+What has and has not run, kept honest: the Nexys A7-100T boots RomWBW's HBIOS
+and CP/M 2.2 on real silicon, off a bitstream in the board's QSPI flash. The
+Arty and C0-microSD builds are verified to a placed, routed, timing-closed
+bitstream and no further, because neither board was ever attached. The SD-backed
+disks read on hardware; writing to them does not work yet, and
+[boards/nexys_a7_100t/romwbw](boards/nexys_a7_100t/romwbw/) says what has been
+ruled out.
+
+## Licence
+
+GPLv3 — see [LICENSE](LICENSE).
+
+The two `mig.prj` files are Digilent's, from their
+[vivado-boards](https://github.com/Digilent/vivado-boards) repository under the
+MIT licence, and are included unmodified so the DDR2 build needs no board-files
+install; see [THIRD-PARTY.txt](THIRD-PARTY.txt). Nothing else here is anyone
+else's: the RomWBW ROM and disk images the board runs are deliberately *not*
+committed, and are fetched from the
+[RomWBW](https://github.com/wwarthen/RomWBW) release package instead.
 
 ## Related Projects
 
