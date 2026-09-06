@@ -1,7 +1,15 @@
 # Arty A7-100T
 
-The primary bring-up target. The -100T has room for the core several times
-over, so nothing here is squeezed.
+The -100T has room for the core several times over, so nothing here is
+squeezed. No Arty has ever run this, though — bring-up happened on a
+[Nexys A7-100T](../nexys_a7_100t/README.md), which carries the same
+XC7A100T-CSG324 part. This target is verified to a timing-closed bitstream and
+no further.
+
+If your board is silent, check which board it is before anything else: an Arty
+bitstream loads happily on a Nexys, asserts DONE and runs completely mute,
+because the two share the part and the E3 clock and nothing else. The Nexys
+README has the pin differences and how to tell the boards apart.
 
 ## Build
 

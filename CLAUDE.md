@@ -64,14 +64,22 @@ process, and all of them are called from the single `always_ff` in
 
 ## Board builds
 
-`boards/arty_a7_100t` wants Vivado; `boards/c0_microsd` wants yosys and
-nextpnr from the OSS CAD Suite, and `mingw32-make` on this machine (there is
-no plain `make`). `boards/qomu` is a note explaining why the core does not fit
-an EOS S3, not a build.
+`boards/arty_a7_100t` and `boards/nexys_a7_100t` want Vivado;
+`boards/c0_microsd` wants yosys and nextpnr from the OSS CAD Suite, and
+`mingw32-make` on this machine (there is no plain `make`). `boards/qomu` is a
+note explaining why the core does not fit an EOS S3, not a build.
 
-No hardware has ever run this. The Arty flow is verified to a placed, routed,
-timing-closed bitstream and no further — WNS +0.927 ns, 0 failing endpoints —
-and that is the whole claim; say it that way rather than implying anything ran.
+**The Nexys A7-100T has run on hardware** — 2026-09-06, banner, `banked memory
+ok` across all eight RAM banks, and console echo over the USB-UART. That is
+the only target that has. The Arty flow is verified to a placed, routed,
+timing-closed bitstream and no further; keep the two claims apart rather than
+letting the hardware result leak onto the board nobody has plugged in.
+
+The two boards use the same XC7A100T-CSG324 and both clock from E3, so an Arty
+bitstream loads on a Nexys, asserts DONE and runs mute — every other pin
+differs, and the Arty's LED pins drive the Nexys seven-segment display, which
+makes it look alive. Tell them apart by the FTDI serial in the JTAG target:
+`210292…` is the Nexys, `210319…` the Arty.
 
 Timing closes only because `arty_a7_100t.xdc` says the core advances on a
 `clk_en` tick one cycle in `CPU_DIV`. Those multicycle exceptions are load

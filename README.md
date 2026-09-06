@@ -37,7 +37,7 @@ from HALT, each checked against the databook's T-state count.
 | `tools/zasm.py` | a Z80 assembler, for the boot ROM and test programs |
 | `sim/` | test benches |
 | `sw/boot.z80` | the boot monitor: banner, bank check, console echo |
-| `boards/` | Arty A7-100T, Signaloid C0-microSD, and why not the Qomu |
+| `boards/` | Nexys A7-100T (runs on hardware), Arty A7-100T, Signaloid C0-microSD, and why not the Qomu |
 
 `docs/architecture.md` explains how the microcode engine works,
 `docs/verification.md` how it is tested, `docs/memory_banking.md` the bank map,
