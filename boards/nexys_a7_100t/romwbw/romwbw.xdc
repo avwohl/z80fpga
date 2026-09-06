@@ -14,6 +14,16 @@ set_property -dict {PACKAGE_PIN N14 IOSTANDARD LVCMOS33} [get_ports {led[3]}]
 set_property -dict {PACKAGE_PIN D4  IOSTANDARD LVCMOS33} [get_ports uart_rxd_out]
 set_property -dict {PACKAGE_PIN C4  IOSTANDARD LVCMOS33} [get_ports uart_txd_in]
 
+## microSD
+set_property -dict {PACKAGE_PIN E2  IOSTANDARD LVCMOS33} [get_ports sd_reset]
+set_property -dict {PACKAGE_PIN A1  IOSTANDARD LVCMOS33} [get_ports sd_cd]
+set_property -dict {PACKAGE_PIN B1  IOSTANDARD LVCMOS33} [get_ports sd_sck]
+set_property -dict {PACKAGE_PIN C1  IOSTANDARD LVCMOS33} [get_ports sd_cmd]
+set_property -dict {PACKAGE_PIN C2  IOSTANDARD LVCMOS33} [get_ports {sd_dat[0]}]
+set_property -dict {PACKAGE_PIN E1  IOSTANDARD LVCMOS33} [get_ports {sd_dat[1]}]
+set_property -dict {PACKAGE_PIN F1  IOSTANDARD LVCMOS33} [get_ports {sd_dat[2]}]
+set_property -dict {PACKAGE_PIN D2  IOSTANDARD LVCMOS33} [get_ports {sd_dat[3]}]
+
 set_property CFGBVS VCCO        [current_design]
 set_property CONFIG_VOLTAGE 3.3 [current_design]
 
@@ -43,7 +53,13 @@ set_multicycle_path 5 -hold  -from $core_ff -to $rom_ff
 set_multicycle_path 6 -setup -from $rom_ff  -to $core_ff
 set_multicycle_path 5 -hold  -from $rom_ff  -to $core_ff
 
-set soc_ff [get_cells -quiet -hier -filter {IS_SEQUENTIAL && (NAME =~ *led_reg* || NAME =~ *u_mmu/* || NAME =~ *u_uart/*)}]
+## u_hdsk is in here for the same reason as the UART: its port strobes are
+## ANDed with clk_en in z80_soc, so a path from the core into it is launched
+## and captured on enable ticks.  Left out, the core's microcode PC reaching
+## the HDSK state machine is seventeen levels against 12.3 ns and misses by
+## 0.8 ns.  u_sd is deliberately NOT here -- it free-runs on the SPI divider
+## and takes nothing directly from the core.
+set soc_ff [get_cells -quiet -hier -filter {IS_SEQUENTIAL && (NAME =~ *led_reg* || NAME =~ *u_mmu/* || NAME =~ *u_uart/* || NAME =~ *u_hdsk/*)}]
 
 set_multicycle_path 12 -setup -from $core_ff -to $soc_ff
 set_multicycle_path 11 -hold  -from $core_ff -to $soc_ff

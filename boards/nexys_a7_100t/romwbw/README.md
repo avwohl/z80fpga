@@ -65,12 +65,44 @@ to 47% and made timing **worse** (WNS -0.983, 178 failing endpoints, against
 -0.730 and 63). The real cause was one unconstrained path, and the MIG's
 internal failures were downstream of the placer being pushed around by it.
 
-## What is not here
+## The disks
 
-No disk. `HDSK0:` and `HDSK1:` are advertised in the inventory but nothing is
-behind them, so drives `C:` through `J:` are not real; `A:` (RAM disk in DDR2)
-and `B:` (ROM disk in block RAM) are. The board has a microSD slot and RomWBW
-has drivers for one.
+`HDSK0:`/`HDSK1:` are the SIMH AltairZ80 hard disk on port `$FD`, and
+`rtl/soc/hdsk.sv` implements that controller against the microSD card through
+`rtl/soc/sd_spi.sv`. No firmware change was needed: the driver is already in a
+stock `SBC_simh_std` ROM, enabled by `HDSKENABLE`, and had been enumerating two
+units that nothing answered for.
 
-Nothing is in flash either, so the design is lost on a power cycle and has to
-be reprogrammed over JTAG.
+Reading is verified on hardware — `STAT C:` under CP/M returns
+`Bytes Remaining On C: 8176k`, read off the card. **Writing is not yet
+working**: `CLRDIR C:` and `PIP` report success and nothing lands, so a
+directory written to the card reads back unchanged and CP/M then says
+`NO DIRECTORY SPACE` while `DIR C:` says `NO FILE` — the signature of a
+directory full of zeros rather than `E5`.
+
+What has been ruled out, so nobody repeats it:
+
+- **The card layer works.** A hardware probe using this exact `sd_spi` module
+  writes a block and reads it back byte-correct: `R1 W00 D00` and the pattern
+  intact.
+- **The protocol and the DMA work in simulation**, including against the real
+  `ddr2_ram` with a behavioural AXI slave — `make test` runs both.
+- **Two real bugs were found and fixed** on the way, either of which would
+  have done it: the write path sent one CRC byte where the card expects two,
+  and `start_rd`/`start_wr` were one-cycle pulses whose completion was tested
+  as `!busy`, so a pulse the card layer did not happen to see reported success
+  having transferred nothing.
+
+The remaining difference between the passing simulation and the failing
+hardware is the MMU: on hardware the DMA address is translated by the live
+bank mapping, which the module-level testbench does not exercise.
+
+Each unit is `UNIT_STRIDE` blocks apart on the card, 1 GiB, matching what the
+driver claims. Unit 0 starts at card block 0, so **writing to `C:` overwrites
+the start of the card**.
+
+## Power-up
+
+`../flash.tcl` writes a bitstream into the board's QSPI flash so it comes up
+running with no computer attached. Set the MODE jumper **JP1 to QSPI** first,
+or the FPGA will ignore the flash at power-up and come up blank.

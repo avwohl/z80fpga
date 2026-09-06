@@ -29,6 +29,13 @@ module top_romwbw (
     input  logic        uart_txd_in,
     output logic        uart_rxd_out,
 
+    // microSD, SPI mode: CS is DAT3, MOSI is CMD, MISO is DAT0
+    output logic        sd_reset,
+    input  logic        sd_cd,
+    output logic        sd_sck,
+    output logic        sd_cmd,
+    inout  wire  [3:0]  sd_dat,
+
     output logic [12:0] ddr2_addr,
     output logic [2:0]  ddr2_ba,
     output logic        ddr2_ras_n,
@@ -113,12 +120,20 @@ module top_romwbw (
   assign rst_n = rst_sync[3];
 
   logic [7:0] led8;
+  logic       sd_cs;
+
+  // The Nexys A7 needs sd_reset driven low to power the slot.
+  assign sd_reset  = 1'b0;
+  assign sd_dat[3] = sd_cs;
+  assign sd_dat[2] = 1'b1;
+  assign sd_dat[1] = 1'b1;
 
   z80_soc #(
       .CLK_HZ       (UI_CLK_HZ),
       .CPU_DIV      (12),                 // 6.8 MHz Z80
       .BAUD         (115200),
       .CONSOLE_SSER (1'b1),               // stock RomWBW drives SSER
+      .USE_HDSK     (1'b1),               // HDSK0:/HDSK1: on port 0xFD
       .USE_DDR2     (1'b1),
       .DDR2_BASE    (0),
       .ROM_BANKS    (16),                 // 512 KB in block RAM
@@ -130,6 +145,8 @@ module top_romwbw (
       .clk (ui_clk), .rst_n (rst_n),
       .uart_rx (uart_txd_in), .uart_tx (uart_rxd_out),
       .led (led8), .sw (8'h00),
+
+      .sd_sck (sd_sck), .sd_mosi (sd_cmd), .sd_miso (sd_dat[0]), .sd_cs (sd_cs),
 
       .m_axi_awaddr (axi_awaddr), .m_axi_awvalid (axi_awvalid),
       .m_axi_awready (axi_awready),
@@ -143,6 +160,6 @@ module top_romwbw (
   );
 
   // led[3] is the one to look at if the console is silent: calibration.
-  assign led = {init_calib_complete, led8[2:0]};
+  assign led = {init_calib_complete, ~sd_cd, led8[1:0]};
 
 endmodule

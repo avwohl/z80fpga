@@ -34,7 +34,7 @@ gen $(GEN): tools/gen_z80.py tools/z80_enc.py
 boot sw/boot.hex: sw/boot.z80
 	$(PYTHON) tools/zasm.py sw/boot.z80 -o sw/boot.hex --size 32768
 
-sim: sim/tb_sst.vvp sim/tb_soc.vvp sim/tb_irq.vvp sim/tb_ddr2ram.vvp
+sim: sim/tb_sst.vvp sim/tb_soc.vvp sim/tb_irq.vvp sim/tb_ddr2ram.vvp sim/tb_hdsk.vvp
 
 sim/tb_sst.vvp: sim/tb_sst.sv $(CORE) $(GEN)
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_sst.sv $(CORE)
@@ -65,6 +65,10 @@ sim/romwbw64k.hex:
 sim/tb_romwbw.vvp: sim/tb_romwbw.sv $(SOC) $(GEN)
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_romwbw.sv $(SOC)
 
+# The SIMH HDSK controller and the SD block layer against a behavioural card.
+sim/tb_hdsk.vvp: sim/tb_hdsk.sv rtl/soc/hdsk.sv rtl/soc/sd_spi.sv
+	$(IVERILOG) -g2012 -o $@ sim/tb_hdsk.sv rtl/soc/hdsk.sv rtl/soc/sd_spi.sv
+
 romwbw: sim/tb_romwbw.vvp sim/romwbw64k.hex
 	$(VVP) sim/tb_romwbw.vvp
 
@@ -73,6 +77,7 @@ test: sim
 	$(VVP) sim/tb_irq.vvp
 	$(VVP) sim/tb_soc.vvp
 	$(VVP) sim/tb_ddr2ram.vvp
+	$(VVP) sim/tb_hdsk.vvp
 	$(PYTHON) tools/run_sst.py --all -n 20 --cycles
 
 test-full: sim

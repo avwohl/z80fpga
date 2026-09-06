@@ -52,7 +52,7 @@ add_files [list \
     $root/rtl/mem/sync_ram.sv \
     $root/rtl/mem/ddr2_ram.sv \
     $root/rtl/soc/z80_mmu.sv \
-    $root/rtl/soc/uart.sv \
+    $root/rtl/soc/uart.sv     $root/rtl/soc/sd_spi.sv     $root/rtl/soc/hdsk.sv \
     $root/rtl/soc/z80_soc.sv \
     $here/top_romwbw.sv]
 set_property include_dirs $root/rtl/core [current_fileset]
