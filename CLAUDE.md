@@ -69,9 +69,16 @@ nextpnr from the OSS CAD Suite, and `mingw32-make` on this machine (there is
 no plain `make`). `boards/qomu` is a note explaining why the core does not fit
 an EOS S3, not a build.
 
-No hardware has ever run this, and the Arty flow does not close timing. It
-routes and writes `z80fpga.bit`, but `report_timing_summary` says WNS
--8.668 ns over 893 failing endpoints: the core advances on a `clk_en` tick
-one cycle in `CPU_DIV`, and the XDC has no multicycle exception saying so.
-Say that rather than implying otherwise — a bitstream is not a closed
-design.
+No hardware has ever run this. The Arty flow is verified to a placed, routed,
+timing-closed bitstream and no further — WNS +0.927 ns, 0 failing endpoints —
+and that is the whole claim; say it that way rather than implying anything ran.
+
+Timing closes only because `arty_a7_100t.xdc` says the core advances on a
+`clk_en` tick one cycle in `CPU_DIV`. Those multicycle exceptions are load
+bearing: without them the same design misses by 8.7 ns over 893 endpoints. If
+you change `CPU_DIV`, the clock-enable structure, or the `en` on `sync_ram`,
+the numbers in that file have to move with it. Two of its spellings fail
+silently — an XDC rejects `if`/`puts`/`remove_from_collection`, and a
+`REF_NAME =~ RAMB*` filter matches nothing before synthesis — so check the log
+for "not supported in the xdc" and "No valid object(s) found" rather than
+trusting that an exception applied.
