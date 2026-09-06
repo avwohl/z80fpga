@@ -1,0 +1,155 @@
+; Drive the SIMH HDSK controller from a real Z80, the way RomWBW's hdsk.asm
+; does: a seven-byte parameter block shifted out with OTIR, then one IN for
+; status.  Write a sector, read it back somewhere else, compare.
+;
+; The point of doing it from the core rather than from a testbench is that this
+; puts the pieces the module-level test cannot reach into the loop -- the MMU
+; translating the DMA address, the memory behind it, and OTIR itself, which
+; leaves B on the high half of the address bus while it runs.
+;
+; Prints:  W<status> R<status> <first four bytes read back> OK   or  BAD
+;
+; The buffers sit above 8000h so they are in the common bank, which is where
+; HBIOS puts its disk buffer too.
+
+UART_ST  equ 000h              ; bit 0 RX ready, bit 1 TX idle
+UART_DAT equ 001h
+HDSK     equ 0FDh
+
+SRC      equ 09000h            ; what we send
+DST      equ 0A000h            ; where it comes back
+
+         org 0000h
+
+start:   di
+         ld sp,0FFF0h
+
+         ; fill SRC with a recognisable 512-byte pattern
+         ld hl,SRC
+         ld a,0A5h
+         ld bc,512
+fill:    ld (hl),a
+         inc hl
+         inc a
+         dec bc
+         ld d,a
+         ld a,b
+         or c
+         ld a,d
+         jr nz,fill
+
+         ; wipe DST so a read that does nothing is obvious
+         ld hl,DST
+         ld bc,512
+         xor a
+wipe:    ld (hl),a
+         inc hl
+         dec bc
+         ld d,a
+         ld a,b
+         or c
+         ld a,d
+         jr nz,wipe
+
+         ; ---- write SRC to sector 0
+         ld hl,wcmd
+         ld b,7
+         ld c,HDSK
+         otir
+         in a,(HDSK)
+         push af
+         ld a,'W'
+         call putc
+         pop af
+         call puthex
+
+         ; ---- read it back into DST
+         ld hl,rcmd
+         ld b,7
+         ld c,HDSK
+         otir
+         in a,(HDSK)
+         push af
+         ld a,'R'
+         call putc
+         pop af
+         call puthex
+
+         ; ---- show the first four bytes that came back
+         ld a,' '
+         call putc
+         ld hl,DST
+         ld b,4
+show:    ld a,(hl)
+         push bc
+         push hl
+         call puthex
+         pop hl
+         pop bc
+         inc hl
+         djnz show
+
+         ; ---- compare all 512
+         ld hl,SRC
+         ld de,DST
+         ld bc,512
+cmp1:    ld a,(de)
+         cp (hl)
+         jr nz,bad
+         inc hl
+         inc de
+         dec bc
+         ld a,b
+         or c
+         jr nz,cmp1
+
+         ld hl,okmsg
+         call puts
+         halt
+
+bad:     ld hl,badmsg
+         call puts
+         halt
+
+; ------------------------------------------------------------------ console
+putc:    push af
+putc1:   in a,(UART_ST)
+         bit 1,a
+         jr z,putc1
+         pop af
+         out (UART_DAT),a
+         ret
+
+puts:    ld a,(hl)
+         or a
+         ret z
+         call putc
+         inc hl
+         jr puts
+
+puthex:  push af
+         rrca
+         rrca
+         rrca
+         rrca
+         call puthex1
+         pop af
+puthex1: and 0Fh
+         add a,090h
+         daa
+         adc a,040h
+         daa
+         jp putc
+
+; ------------------------------------------------------------ command blocks
+; cmd, drive, sector, track lo, track hi, dma lo, dma hi
+; DMA address is little endian: low byte then high.  Spelled out because the
+; assembler has no low/high operators.
+; A deliberately non-zero LBA: sector 12h, track 0034h, so LBA = 003412h.
+; CP/M's directory is nowhere near sector 0, and an LBA assembled wrongly in
+; its high bytes would read correctly from 0 and write somewhere else.
+wcmd:    db 3, 0, 012h, 034h, 000h, 000h, 090h
+rcmd:    db 2, 0, 012h, 034h, 000h, 000h, 0A0h
+
+okmsg:   db " OK", 0Dh, 0Ah, 0
+badmsg:  db " BAD", 0Dh, 0Ah, 0

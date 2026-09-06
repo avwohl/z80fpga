@@ -38,6 +38,8 @@ module top (
       .rst_n   (rst_sync[3]),
       .uart_rx (uart_txd_in),
       .uart_tx (uart_rxd_out),
+      .uart_cts_n (1'b0),               // no flow control on this build
+      .uart_rts_n (),
       .led     (led8),
       .sw      ({4'd0, sw})
   );

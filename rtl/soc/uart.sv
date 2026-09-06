@@ -20,6 +20,9 @@
 // being present, so leaving the emulator ports decoded in a RomWBW build
 // invents a console that is not there.
 //
+// FLOW_CTRL adds RTS/CTS.  Off, rts_n is held asserted and cts_n is ignored,
+// which is exactly what the design did before the signals existed.
+//
 // RX_DEPTH bytes of receive buffering.  A single byte is not enough: a Z80
 // echo loop that has to wait for its own transmitter can be a couple of
 // character times behind the line.  An overrun drops the newest byte and is
@@ -32,6 +35,7 @@ module uart #(
     parameter int CLK_HZ       = 50_000_000,
     parameter int BAUD         = 115200,
     parameter int RX_DEPTH     = 16,
+    parameter bit FLOW_CTRL    = 1'b0,   // honour cts_n, drive rts_n
     parameter bit CONSOLE_SSER = 1'b0    // 1: RomWBW SSER at 0x68/0x6D
 ) (
     input  logic       clk,
@@ -45,7 +49,22 @@ module uart #(
     output logic       port_hit,
 
     input  logic       rx,
-    output logic       tx
+    output logic       tx,
+
+    // Hardware flow control, named for what this end does with them, which is
+    // NOT what the Nexys A7 calls the pins.  The board names them from the
+    // FT2232's point of view, so they cross over:
+    //
+    //   cts_n  <- board pin uart_rts (E5).  The bridge drives it low while it
+    //             can accept data, so it gates our transmitter.
+    //   rts_n  -> board pin uart_cts (D3).  We drive it low while we can
+    //             accept data, so it gates the bridge's transmitter.
+    //
+    // Both are active low, and that was measured rather than assumed: with
+    // pull-ups and both read as inputs, D3 sat at 1 (undriven, so it is ours
+    // to drive) and E5 at 0 (driven by the bridge).
+    input  logic       cts_n,
+    output logic       rts_n
 );
 
   localparam logic [7:0] STAT_PORT = CONSOLE_SSER ? 8'h6D : 8'h00;
@@ -100,6 +119,24 @@ module uart #(
   assign rx_ready  = (wptr != rptr);
   assign fifo_full = (wptr[FW-1:0] == rptr[FW-1:0]) && (wptr[FW] != rptr[FW]);
 
+  // Ask the far end to stop before the buffer is actually full, not when it
+  // already is: at 115200 a character is in flight while we are deciding, and
+  // an overrun here drops the newest byte silently.  Hysteresis so a busy
+  // reader does not make the line chatter.
+  logic [FW:0] fifo_used;
+  logic        hold_off;
+  assign fifo_used = wptr - rptr;
+
+  always_ff @(posedge clk) begin
+    if (!rst_n)                                   hold_off <= 1'b0;
+    else if (fifo_used >= (FW+1)'(RX_DEPTH - 4))  hold_off <= 1'b1;
+    else if (fifo_used <= (FW+1)'(RX_DEPTH / 2))  hold_off <= 1'b0;
+  end
+
+  // Low means "send when you like".  With flow control off the far end is
+  // never asked to wait, which is how every build before this one behaved.
+  assign rts_n = FLOW_CTRL ? hold_off : 1'b0;
+
   always_ff @(posedge clk) rx_sync <= {rx_sync[0], rx};
 
   always_ff @(posedge clk) begin
@@ -137,10 +174,18 @@ module uart #(
   end
 
   // ------------------------------------------------------------------ ports
+  // Flow control belongs in the status bit, not in the write.  Refusing the
+  // write would throw the byte away; reporting the transmitter as busy makes
+  // the program wait, which is what it already knows how to do -- RomWBW's
+  // putc polls this bit, so the far end saying "stop" simply stalls the
+  // sender until it says otherwise.
+  logic tx_ok;
+  assign tx_ok = ~tx_busy && (!FLOW_CTRL || !cts_n);
+
   assign port_hit   = (port_addr == STAT_PORT) || (port_addr == DATA_PORT);
   assign port_rdata = (port_addr == STAT_PORT)
-                    ? (CONSOLE_SSER ? {2'd0, ~tx_busy, 4'd0, rx_ready}
-                                    : {6'd0, ~tx_busy, rx_ready})
+                    ? (CONSOLE_SSER ? {2'd0, tx_ok, 4'd0, rx_ready}
+                                    : {6'd0, tx_ok, rx_ready})
                     : fifo[rptr[FW-1:0]];
 
 endmodule

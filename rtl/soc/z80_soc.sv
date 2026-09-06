@@ -20,6 +20,7 @@ module z80_soc #(
     parameter int BAUD      = 115200,
     parameter bit CONSOLE_SSER = 1'b0,      // 1: RomWBW SSER console at 0x68/0x6D
     parameter int MEM_WAIT   = 0,           // extra T-states per memory cycle
+    parameter bit FLOW_CTRL  = 1'b0,        // RTS/CTS on the console
     parameter bit USE_HDSK   = 1'b0,        // SIMH HDSK on port 0xFD, backed by microSD
     parameter bit USE_DDR2   = 1'b0,        // RAM banks live in DDR2, not block RAM
     parameter int DDR2_BASE  = 0,           // byte offset of the RAM in DDR2
@@ -39,6 +40,8 @@ module z80_soc #(
     input  logic       rst_n,
     input  logic       uart_rx,
     output logic       uart_tx,
+    input  logic       uart_cts_n,        // board pin uart_rts
+    output logic       uart_rts_n,        // board pin uart_cts
     output logic [7:0] led,
     input  logic [7:0] sw,
 
@@ -216,12 +219,14 @@ module z80_soc #(
   logic [7:0] uart_rdata;
   logic       uart_hit;
 
-  uart #(.CLK_HZ (CLK_HZ), .BAUD (BAUD), .CONSOLE_SSER (CONSOLE_SSER)) u_uart (
+  uart #(.CLK_HZ (CLK_HZ), .BAUD (BAUD), .CONSOLE_SSER (CONSOLE_SSER),
+         .FLOW_CTRL (FLOW_CTRL)) u_uart (
       .clk (clk), .rst_n (rst_n),
       .port_addr (a[7:0]), .port_wdata (dout),
       .port_wr (port_wr && clk_en), .port_rd (port_rd && clk_en),
       .port_rdata (uart_rdata), .port_hit (uart_hit),
-      .rx (uart_rx), .tx (uart_tx)
+      .rx (uart_rx), .tx (uart_tx),
+      .cts_n (uart_cts_n), .rts_n (uart_rts_n)
   );
 
   always_ff @(posedge clk) begin

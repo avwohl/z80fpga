@@ -93,9 +93,23 @@ What has been ruled out, so nobody repeats it:
   as `!busy`, so a pulse the card layer did not happen to see reported success
   having transferred nothing.
 
-The remaining difference between the passing simulation and the failing
-hardware is the MMU: on hardware the DMA address is translated by the live
-bank mapping, which the module-level testbench does not exercise.
+That MMU theory has since been tested and is also wrong. `sim/tb_hdsk_soc.sv`
+runs the whole SoC with a real Z80 executing `sim/hdsk_test.z80`, which drives
+port `$FD` exactly as `hdsk.asm` does — a seven-byte block shifted out with
+`OTIR`, then one `IN` — and it passes, printing `W00 R00 A5A6A7A8 OK` after
+comparing all 512 bytes. That puts `OTIR`, the MMU translating the DMA address
+into a bank, `ddr2_ram` and the card layer in one loop, at a deliberately
+non-zero LBA (sector `12h`, track `0034h`, so `00003412`, since CP/M's
+directory is nowhere near sector 0 and a wrongly assembled high byte would read
+from 0 correctly and write elsewhere). The controller asks the card for exactly
+that LBA on both the write and the read.
+
+So every layer passes in simulation and the card layer passes on hardware, and
+the two together still fail on hardware. What is left is something simulation
+does not model: the real card's behaviour in the sequence RomWBW actually uses
+— many reads and then a write — rather than the isolated write-then-read both
+probes do. The next step is to instrument the hardware rather than reason about
+it: capture what the controller issues during a CP/M directory write.
 
 Each unit is `UNIT_STRIDE` blocks apart on the card, 1 GiB, matching what the
 driver claims. Unit 0 starts at card block 0, so **writing to `C:` overwrites

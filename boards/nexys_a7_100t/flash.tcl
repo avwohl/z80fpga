@@ -35,11 +35,14 @@ if {[llength $argv] >= 2} {
     set mcs [file rootname $bit].mcs
 }
 
-# The part on the Nexys A7-100T, a 16 MB Spansion S25FL128S at 3.3 V.
-# Note the naming: older Vivado called this "s25fl128sxxxxxx0-spi-x1_x2_x4",
-# and 2026.1 does not know that name at all -- get_cfgmem_parts returns an
-# empty list and create_hw_cfgmem then fails with something unhelpful.
-set flash_part "s25fl128s-3.3v-qspi-x1-single"
+# The part on the Nexys A7-100T, a 16 MB Spansion S25FL128S.
+#
+# Look it up with -of_objects against the actual device, not by globbing the
+# whole catalogue.  A bare `get_cfgmem_parts {s25fl128s*}` matches names from
+# other device families first -- s25fl128s-3.3v-qspi-x1-single among them --
+# and those are accepted by get_cfgmem_parts and then rejected by
+# create_hw_cfgmem with "Cfgmem part ... is not supported for device artix7".
+set flash_part "s25fl128sxxxxxx0-spi-x1_x2_x4"
 
 puts "==> building $mcs from [file tail $bit]"
 write_cfgmem -force -format mcs -size 16 -interface SPIx1 \
@@ -54,8 +57,10 @@ current_hw_device $dev
 refresh_hw_device -update_hw_probes false $dev
 puts "==> device [get_property PART $dev]"
 
-set part [lindex [get_cfgmem_parts $flash_part] 0]
-if {$part eq ""} { error "Vivado does not know the flash part $flash_part" }
+set part [lindex [get_cfgmem_parts -of_objects $dev $flash_part] 0]
+if {$part eq ""} {
+    error "no flash part matching $flash_part is compatible with this device"
+}
 create_hw_cfgmem -hw_device $dev $part
 set cfg [get_property PROGRAM.HW_CFGMEM $dev]
 

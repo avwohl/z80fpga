@@ -28,6 +28,8 @@ module top_romwbw (
     output logic [3:0]  led,
     input  logic        uart_txd_in,
     output logic        uart_rxd_out,
+    input  logic        uart_rts,        // bridge drives this: our CTS
+    output logic        uart_cts,        // we drive this: our RTS
 
     // microSD, SPI mode: CS is DAT3, MOSI is CMD, MISO is DAT0
     output logic        sd_reset,
@@ -133,6 +135,7 @@ module top_romwbw (
       .CPU_DIV      (12),                 // 6.8 MHz Z80
       .BAUD         (115200),
       .CONSOLE_SSER (1'b1),               // stock RomWBW drives SSER
+      .FLOW_CTRL    (1'b1),               // RTS/CTS on the console
       .USE_HDSK     (1'b1),               // HDSK0:/HDSK1: on port 0xFD
       .USE_DDR2     (1'b1),
       .DDR2_BASE    (0),
@@ -144,6 +147,10 @@ module top_romwbw (
   ) u_soc (
       .clk (ui_clk), .rst_n (rst_n),
       .uart_rx (uart_txd_in), .uart_tx (uart_rxd_out),
+      // The crossover is real: the pin called uart_rts feeds our cts_n, and
+      // the pin called uart_cts is driven by our rts_n.  Digilent names them
+      // from the bridge's end.
+      .uart_cts_n (uart_rts), .uart_rts_n (uart_cts),
       .led (led8), .sw (8'h00),
 
       .sd_sck (sd_sck), .sd_mosi (sd_cmd), .sd_miso (sd_dat[0]), .sd_cs (sd_cs),

@@ -13,6 +13,10 @@ set_property -dict {PACKAGE_PIN N14 IOSTANDARD LVCMOS33} [get_ports {led[3]}]
 
 set_property -dict {PACKAGE_PIN D4  IOSTANDARD LVCMOS33} [get_ports uart_rxd_out]
 set_property -dict {PACKAGE_PIN C4  IOSTANDARD LVCMOS33} [get_ports uart_txd_in]
+## Flow control.  Measured, not assumed: D3 read 1 undriven so it is ours to
+## drive, E5 read 0 driven by the bridge so it is an input here.
+set_property -dict {PACKAGE_PIN E5  IOSTANDARD LVCMOS33} [get_ports uart_rts]
+set_property -dict {PACKAGE_PIN D3  IOSTANDARD LVCMOS33} [get_ports uart_cts]
 
 ## microSD
 set_property -dict {PACKAGE_PIN E2  IOSTANDARD LVCMOS33} [get_ports sd_reset]
