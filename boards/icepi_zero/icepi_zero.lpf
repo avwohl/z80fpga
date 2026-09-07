@@ -1,0 +1,60 @@
+## Icepi Zero (Lattice ECP5 LFE5U-25F, CABGA256) constraints for the z80fpga SoC.
+## Sites are from cheyao/icepi-zero's gateware/icepi-zero.lpf; only the pins
+## this build uses are here.
+## This is an altered version of that file, under the zlib licence; see
+## ../../THIRD-PARTY.txt.
+##
+## Two of these lines are for other tools rather than for nextpnr, which is
+## worth knowing before trusting them:
+##
+##   * SYSCONFIG's MASTER_SPI_PORT, SLAVE_SPI_PORT and SLAVE_PARALLEL_PORT are
+##     accepted and silently dropped -- only COMPRESS_CONFIG, CONFIG_IOVOLTAGE
+##     and MCCLK_FREQ reach the bitstream.  They are kept because the silicon
+##     defaults already are what they ask for and because Diamond reads them.
+##   * BLOCK RESETPATHS and BLOCK ASYNCPATHS parse and have no effect on the
+##     timing analysis at all.  Same reason.
+##
+## nextpnr-ecp5 has no multicycle and no false path -- set_multicycle_path is a
+## hard error even through --sdc -- so nothing here can tell it that the core
+## advances on a clock enable.  It does not have to: this build runs the whole
+## design on one clock at the Z80's own rate.  See top.sv.
+
+SYSCONFIG CONFIG_IOVOLTAGE=3.3 COMPRESS_CONFIG=ON MCCLK_FREQ=62 MASTER_SPI_PORT=ENABLE SLAVE_SPI_PORT=DISABLE SLAVE_PARALLEL_PORT=DISABLE;
+
+BLOCK RESETPATHS;
+BLOCK ASYNCPATHS;
+
+## The 50 MHz board oscillator.  clk_sys is half of it, and is where the real
+## constraint is: an unconstrained internal clock is not checked at all, and
+## nextpnr says nothing when a constraint fails to apply, so the "constraining
+## clock net 'clk_sys'" line in the log is the only proof it took.
+LOCATE COMP "clk" SITE "M1";
+IOBUF  PORT "clk" IO_TYPE=LVCMOS33 PULLMODE=NONE;
+FREQUENCY PORT "clk" 50 MHZ;
+FREQUENCY NET "clk_sys" 25 MHZ;
+
+## The FT231X USB-UART, which is also the JTAG the bitstream arrives over.
+## Named from the FPGA's end: usb_tx is what we transmit.
+LOCATE COMP "usb_tx" SITE "K15";
+IOBUF  PORT "usb_tx" IO_TYPE=LVCMOS33 PULLMODE=UP DRIVE=4;
+LOCATE COMP "usb_rx" SITE "K16";
+IOBUF  PORT "usb_rx" IO_TYPE=LVCMOS33 PULLMODE=UP DRIVE=4;
+
+## Five user LEDs.
+LOCATE COMP "led[0]" SITE "E13";
+IOBUF  PORT "led[0]" IO_TYPE=LVCMOS33 PULLMODE=DOWN DRIVE=4;
+LOCATE COMP "led[1]" SITE "D14";
+IOBUF  PORT "led[1]" IO_TYPE=LVCMOS33 PULLMODE=DOWN DRIVE=4;
+LOCATE COMP "led[2]" SITE "E12";
+IOBUF  PORT "led[2]" IO_TYPE=LVCMOS33 PULLMODE=DOWN DRIVE=4;
+LOCATE COMP "led[3]" SITE "C13";
+IOBUF  PORT "led[3]" IO_TYPE=LVCMOS33 PULLMODE=DOWN DRIVE=4;
+LOCATE COMP "led[4]" SITE "D13";
+IOBUF  PORT "led[4]" IO_TYPE=LVCMOS33 PULLMODE=DOWN DRIVE=4;
+
+## Two buttons, pulled up, so they read 1 idle and 0 pressed.  button[0] is
+## reset; button[1] is switch 0 on the SoC's input port.
+LOCATE COMP "button[0]" SITE "C4";
+IOBUF  PORT "button[0]" IO_TYPE=LVCMOS33 PULLMODE=UP DRIVE=4;
+LOCATE COMP "button[1]" SITE "C5";
+IOBUF  PORT "button[1]" IO_TYPE=LVCMOS33 PULLMODE=UP DRIVE=4;

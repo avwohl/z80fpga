@@ -150,3 +150,18 @@ datapath — the register file's read muxes and write decoder, the ALU, and the
 composite-operation block. The dispatch tables are read synchronously, when
 the opcode byte is latched, which is at least one T-state before the answer is
 needed; that is what lets them sit in block RAM instead of a 1280-entry mux.
+
+On an ECP5 (`synth_ecp5`, LFE5U-25F), the same core:
+
+```
+5303  LUT4
+ 261  CCU2C           (carry, two LUT4 positions each)
+ 335  flip-flops
+   1  DP16KD          (the dispatch tables)
+```
+
+That is 5825 LUT4 positions once the carry cells are counted the way nextpnr
+counts them, against the iCE40's 4641 — a difference in how carry logic is
+accounted for as much as in how much logic there is. Only one block RAM this
+time, because an ECP5's is 18 Kbit rather than 4 Kbit and all 1280 dispatch
+entries fit in one.

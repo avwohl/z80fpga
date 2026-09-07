@@ -12,9 +12,17 @@ boards/*/*/build/
 boards/*/*.json
 boards/*/*.asc
 boards/*/*.bin
+boards/*/*.bit
+boards/*/*.config
 boards/*/*.log
 boards/*/*.mem
 boards/*/boot.hex
+boards/*/*/*.json
+boards/*/*/*.bit
+boards/*/*/*.config
+boards/*/*/*.log
+boards/*/*/*.mem
+boards/*/*/boot.hex
 # Vivado opens these where it was launched, before build.tcl cds into build/
 vivado*.jou
 .Xil/

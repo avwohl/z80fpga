@@ -65,9 +65,15 @@ process, and all of them are called from the single `always_ff` in
 ## Board builds
 
 `boards/arty_a7_100t` and `boards/nexys_a7_100t` want Vivado;
-`boards/c0_microsd` wants yosys and nextpnr from the OSS CAD Suite, and
-`mingw32-make` on this machine (there is no plain `make`). `boards/qomu` is a
-note explaining why the core does not fit an EOS S3, not a build.
+`boards/c0_microsd` and `boards/icepi_zero` want yosys and nextpnr from the
+OSS CAD Suite, and `mingw32-make` on this machine (there is no plain `make`).
+`boards/qomu` is a note explaining why the core does not fit an EOS S3, not a
+build.
+
+yosys on this machine does not understand MSYS paths — `/c/temp/...` is "file
+not found" — so the nextpnr board Makefiles use relative paths from the board
+directory, which works. A `$readmemh` inside the RTL resolves relative to the
+Verilog source file, not the working directory.
 
 **The Nexys A7-100T has run on hardware** — 2026-09-06, banner, `banked memory
 ok` across all eight RAM banks, and console echo over the USB-UART. That is
@@ -90,3 +96,15 @@ silently — an XDC rejects `if`/`puts`/`remove_from_collection`, and a
 `REF_NAME =~ RAMB*` filter matches nothing before synthesis — so check the log
 for "not supported in the xdc" and "No valid object(s) found" rather than
 trusting that an exception applied.
+
+**nextpnr-ecp5 has no such escape hatch.** Its LPF reader knows `LOCATE`,
+`IOBUF`, `FREQUENCY`, `SYSCONFIG`, `BANK` and `BLOCK` and nothing else; a
+`MULTICYCLE` or `MAXDELAY` line is accepted in total silence and does nothing,
+and `set_multicycle_path` through `--sdc` is a hard error. So the ECP5 build
+cannot run its fabric faster than its Z80: `boards/icepi_zero` halves the
+50 MHz board clock and sets `CPU_DIV = 1`, because the core routes at
+27.9–29.5 MHz on an LFE5U-25F. `FREQUENCY NET "clk_sys" 25 MHZ;` is what
+constrains the derived clock, and an unconstrained internal clock is not
+checked at all — the only proof it applied is
+`constraining clock net 'clk_sys'` in `nextpnr.log`, which
+`mingw32-make timing` prints.

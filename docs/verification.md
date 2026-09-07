@@ -66,7 +66,7 @@ Two details the bench has to get right, both learned from mismatches:
 ## The SoC test
 
 ```
-make test        # runs all three benches and a 20-case sweep
+make test        # runs every bench and a 20-case sweep
 vvp sim/tb_soc.vvp
 ```
 
@@ -84,6 +84,39 @@ vvp sim/tb_soc.vvp
 byte lost in the UART from one the program never read. That is exactly how the
 missing receive FIFO was found: the CPU's `in` log showed `41` then `0d`, with
 no `42` in between.
+
+## The off-chip memory tests
+
+The RAM banks do not always live in block RAM, and a backing store that cannot
+answer inside a T-state has to hold `wait_n` low until it can. That path has
+three benches.
+
+```
+vvp sim/tb_ddr2ram.vvp     # RAM in DDR2, behind a behavioural AXI slave
+vvp sim/tb_sdram.vvp       # the SDRAM controller against a model of the chip
+vvp sim/tb_sdram_soc.vvp   # the SoC with 512 KB of RAM in SDRAM
+```
+
+`sim/tb_ddr2ram.sv` and `sim/tb_sdram_soc.sv` both run the ordinary boot
+monitor, which is the point: its bank check writes a signature into every RAM
+bank and reads it back from code running in the common bank, so reads, writes,
+bank switching and a long, variable `wait_n` are all exercised at once against
+an answer already known from the block RAM build. The DDR2 slave's latency
+wanders between 3 and 18 clocks so that nothing can accidentally depend on a
+fixed number.
+
+`sim/tb_sdram.sv` is the unit test underneath the second of those, and the
+model it runs against does most of the work. `sim/sdram_model.sv` decodes the
+command bus the way an MT48LC16M16 does and stops the simulation on anything
+the chip would have quietly turned into garbage — a column command before
+tRCD, a READ on a bank with no open row, an ACTIVE inside tRC, a row outside
+the window it was given, a refresh that never came — so the power-up sequence
+and the timing are checked whether the bench mentions them or not. What the
+bench itself checks is the address decode, with a dozen bytes chosen to move
+each field on its own, and the read latency, which has to be exact rather than
+merely sufficient: the model's clock is the inverted fabric clock, the way the
+board wires it, and the bench fails if the capture is one clock out in either
+direction.
 
 ## The interrupt tests
 
@@ -109,8 +142,20 @@ the end of EI cannot accept an interrupt and the next one can.
 
 ## What is not covered
 
-- **WAIT and BUSRQ.** `wait_n` stretches the strobe T-state and is exercised
-  only by inspection. `busak_n` currently just mirrors `busrq_n`; a real bus
-  grant that tri-states the pins at an M-cycle boundary is not implemented.
-- **Hardware.** No board was available. The Arty and C0-microSD builds are
-  verified to a placed, routed, timing-closed bitstream and no further.
+- **BUSRQ.** `busak_n` currently just mirrors `busrq_n`; a real bus grant that
+  tri-states the pins at an M-cycle boundary is not implemented. `wait_n` is
+  no longer on this list — the off-chip memory benches above hold it low for a
+  variable number of T-states on every access.
+- **Hardware, except on one board.** The Nexys A7-100T has run: banner, bank
+  check, console echo, and RomWBW and CP/M 2.2 on top of that. The Arty,
+  Icepi Zero and C0-microSD builds are verified to a placed, routed,
+  timing-closed bitstream and no further, because none of those boards was
+  ever attached.
+- **The SDRAM, against a real chip.** `sim/sdram_model.sv` is a model, and a
+  model agreeing with the controller proves they agree, not that either
+  matches the part on the board.
+- **`USE_SDRAM` together with `USE_HDSK`.** The HDSK DMA takes its
+  acknowledgement from the same `ram_ready` for both off-chip backends, but
+  only the DDR2 half of that is exercised, by `sim/tb_hdsk_soc.sv`. No board
+  builds the combination — the Icepi Zero has no ROM big enough for the
+  firmware that would drive HDSK — so it is untested rather than broken.

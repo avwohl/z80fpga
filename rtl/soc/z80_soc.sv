@@ -24,6 +24,7 @@ module z80_soc #(
     parameter bit USE_HDSK   = 1'b0,        // SIMH HDSK on port 0xFD, backed by microSD
     parameter bit USE_DDR2   = 1'b0,        // RAM banks live in DDR2, not block RAM
     parameter int DDR2_BASE  = 0,           // byte offset of the RAM in DDR2
+    parameter bit USE_SDRAM  = 1'b0,        // RAM banks live in SDR SDRAM
     parameter int ROM_BANKS = 1,            // x 32 KB
     parameter int RAM_BANKS = 2,
     // Backing store size, as an address width.  Defaults to the whole bank
@@ -45,7 +46,8 @@ module z80_soc #(
     output logic [7:0] led,
     input  logic [7:0] sw,
 
-    // AXI4 to the MIG.  Only driven when USE_DDR2; leave unconnected otherwise.
+    // AXI4 to the MIG.  Meaningful only when USE_DDR2, tied off otherwise, so
+    // a board that does not use them can leave them unconnected.
     output logic [26:0]  m_axi_awaddr,
     output logic         m_axi_awvalid,
     input  logic         m_axi_awready,
@@ -60,6 +62,26 @@ module z80_soc #(
     output logic         sd_mosi,
     input  logic         sd_miso,
     output logic         sd_cs,
+
+    // SDR SDRAM.  Meaningful only when USE_SDRAM, tied off otherwise.  DQ is
+    // split rather than being an inout so that the tristate stays in the board
+    // top, where the pad is.
+    output logic [12:0]  sdram_a,
+    output logic  [1:0]  sdram_ba,
+    output logic  [1:0]  sdram_dqm,
+    output logic         sdram_cs_n,
+    output logic         sdram_ras_n,
+    output logic         sdram_cas_n,
+    output logic         sdram_we_n,
+    output logic         sdram_cke,
+    output logic [15:0]  sdram_dq_o,
+    output logic         sdram_dq_oe,
+    input  logic [15:0]  sdram_dq_i,
+    // The chip's power-up sequence has finished.  Nothing has to wait for it --
+    // an access before then simply holds wait_n low -- but it is the first
+    // thing worth putting on an LED if a board is mute.  High when there is no
+    // SDRAM to initialise.
+    output logic         sdram_init_done,
 
     output logic [26:0]  m_axi_araddr,
     output logic         m_axi_arvalid,
@@ -93,8 +115,8 @@ module z80_soc #(
   // Memory that cannot answer in one T-state stretches the cycle by holding
   // wait_n low at the strobe T-state; the core freezes tcnt there.  MEM_WAIT
   // inserts a fixed number of them, which is how the path gets tested without
-  // real slow memory attached.  A DDR2-backed bank drives the same signal from
-  // its own ready instead.
+  // real slow memory attached.  A bank in DDR2 or in SDRAM drives the same
+  // signal from its own ready instead.
   // Declared here rather than where they are driven: this block and the MMU
   // instantiation both come before the memory and HDSK sections that assign
   // them, and a signal has to be declared before it is used.
@@ -110,7 +132,7 @@ module z80_soc #(
   logic [7:0]  mem_wdata;
 
   generate
-    if (USE_DDR2) begin : g_ddrwait
+    if (USE_DDR2 || USE_SDRAM) begin : g_ddrwait
       assign wait_n = !((ram_cycle && !ram_ready) || hdsk_wait);
     end else if (MEM_WAIT == 0) begin : g_nowait
       assign wait_n = !hdsk_wait;
@@ -126,7 +148,7 @@ module z80_soc #(
       end
       assign wait_n = !((mem_cycle && wcnt != WW'(MEM_WAIT)) || hdsk_wait);
     end
-    if (!USE_DDR2) begin : g_noready
+    if (!USE_DDR2 && !USE_SDRAM) begin : g_noready
       assign ram_ready = 1'b1;
     end
   endgenerate
@@ -206,12 +228,52 @@ module z80_soc #(
           .araddr (m_axi_araddr), .arvalid (m_axi_arvalid), .arready (m_axi_arready),
           .rdata_axi (m_axi_rdata), .rvalid (m_axi_rvalid), .rready (m_axi_rready)
       );
+    end else if (USE_SDRAM) begin : g_sdram
+      // Same bargain as the DDR2 bank and for the same reason: the chip cannot
+      // answer in a T-state, so it holds wait_n low until it has.  The request
+      // is the ungated bus cycle here too.
+      sdram_ram #(.CLK_HZ (CLK_HZ), .AW (RAM_AW)) u_ram (
+          .clk (clk), .rst_n (rst_n),
+          .req (ram_cycle), .we (mem_wr_eff),
+          .addr (phys[RAM_AW-1:0]), .wdata (mem_wdata),
+          .rdata (ram_rdata), .ready (ram_ready), .init_done (sdram_init_done),
+          .sd_a (sdram_a), .sd_ba (sdram_ba), .sd_dqm (sdram_dqm),
+          .sd_cs_n (sdram_cs_n), .sd_ras_n (sdram_ras_n),
+          .sd_cas_n (sdram_cas_n), .sd_we_n (sdram_we_n), .sd_cke (sdram_cke),
+          .sd_dq_o (sdram_dq_o), .sd_dq_oe (sdram_dq_oe), .sd_dq_i (sdram_dq_i)
+      );
     end else begin : g_bram
       sync_ram #(.AW (RAM_AW)) u_ram (
           .clk (clk), .en (1'b1), .addr (phys[RAM_AW-1:0]),
           .wdata (mem_wdata), .we (mem_wr_eff && (clk_en || dma_req)),
           .rdata (ram_rdata)
       );
+    end
+
+    if (!USE_DDR2) begin : g_noddr2
+      assign m_axi_awaddr  = 27'd0;
+      assign m_axi_awvalid = 1'b0;
+      assign m_axi_wdata   = 128'd0;
+      assign m_axi_wstrb   = 16'd0;
+      assign m_axi_wvalid  = 1'b0;
+      assign m_axi_bready  = 1'b0;
+      assign m_axi_araddr  = 27'd0;
+      assign m_axi_arvalid = 1'b0;
+      assign m_axi_rready  = 1'b0;
+    end
+
+    if (!USE_SDRAM) begin : g_nosdram
+      assign sdram_a         = 13'd0;
+      assign sdram_ba        = 2'd0;
+      assign sdram_dqm       = 2'b11;
+      assign sdram_cs_n      = 1'b1;
+      assign sdram_ras_n     = 1'b1;
+      assign sdram_cas_n     = 1'b1;
+      assign sdram_we_n      = 1'b1;
+      assign sdram_cke       = 1'b0;
+      assign sdram_dq_o      = 16'd0;
+      assign sdram_dq_oe     = 1'b0;
+      assign sdram_init_done = 1'b1;
     end
   endgenerate
 
@@ -244,13 +306,13 @@ module z80_soc #(
       logic [4:0] sd_dbg_state;
       logic [31:0] sd_lba;
 
-      // The memory answers a DMA byte in one clock when it is block RAM and
-      // when ram_ready says so for DDR2.
+      // The memory answers a DMA byte in one clock when it is block RAM, and
+      // when ram_ready says so when it is off-chip.
       logic dma_req_d;
       always_ff @(posedge clk) dma_req_d <= dma_req;
-      assign dma_ack = !dma_req                      ? 1'b0
-                     : (!sel_rom && USE_DDR2)        ? ram_ready
-                                                     : dma_req_d;
+      assign dma_ack = !dma_req                             ? 1'b0
+                     : (!sel_rom && (USE_DDR2 || USE_SDRAM)) ? ram_ready
+                                                             : dma_req_d;
 
       hdsk u_hdsk (
           .clk (clk), .rst_n (rst_n),

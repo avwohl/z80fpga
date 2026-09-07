@@ -32,13 +32,13 @@ from HALT, each checked against the databook's T-state count.
 |---|---|
 | `rtl/core/` | the CPU: ALU, sequencer, and the generated ROMs |
 | `rtl/soc/` | banked-memory MMU, UART, and a small SoC around the core |
-| `rtl/mem/` | block-RAM and iCE40 SPRAM backing stores |
+| `rtl/mem/` | block-RAM, iCE40 SPRAM, DDR2 and SDRAM backing stores |
 | `tools/gen_z80.py` | the instruction-set description and the ROM generator |
 | `tools/run_sst.py` | the SingleStepTests harness |
 | `tools/zasm.py` | a Z80 assembler, for the boot ROM and test programs |
 | `sim/` | test benches |
 | `sw/boot.z80` | the boot monitor: banner, bank check, console echo |
-| `boards/` | Nexys A7-100T (runs on hardware), Arty A7-100T, Signaloid C0-microSD, and why not the Qomu |
+| `boards/` | Nexys A7-100T (runs on hardware), Arty A7-100T, Icepi Zero, Signaloid C0-microSD, and why not the Qomu |
 
 `docs/architecture.md` explains how the microcode engine works,
 `docs/verification.md` how it is tested, `docs/memory_banking.md` the bank map,
@@ -52,13 +52,14 @@ CP/M 2.2 on real hardware, and what the console has to look like for that.
 
 Everything here builds with the [OSS CAD
 Suite](https://github.com/YosysHQ/oss-cad-suite-build) — Icarus Verilog for
-simulation, yosys and nextpnr for the iCE40 bitstream. Unpack it and:
+simulation, yosys and nextpnr for the iCE40 and ECP5 bitstreams. Unpack it
+and:
 
 ```
 source tools/ossenv.sh          # set OSS_CAD_ROOT if it is not /c/temp/tools
 ```
 
-The Arty flow wants Vivado. The test harness wants a checkout of
+The Arty and Nexys flows want Vivado. The test harness wants a checkout of
 [SingleStepTests/z80](https://github.com/SingleStepTests/z80); point
 `Z80_TESTS` or `--suite` at it.
 
@@ -112,6 +113,11 @@ across the cycle the way the real part drives an external bus.
 - **[Arty A7-100T](boards/arty_a7_100t/)** — same part, different pinout.
   8.33 MHz Z80, 64 KB ROM and 256 KB RAM in block RAM. Timing-closed but never
   run: no Arty was ever attached.
+- **[Icepi Zero](boards/icepi_zero/)** — an ECP5 LFE5U-25F in a Pi Zero
+  footprint, and the fastest Z80 here at 25 MHz. 32 KB of ROM and 64 KB of
+  RAM in block RAM; [`sdram/`](boards/icepi_zero/sdram/) puts the full 512 KB
+  of RAM in the board's SDRAM instead. yosys and nextpnr, and the board
+  programs itself over its own USB-C.
 - **[Signaloid C0-microSD](boards/c0_microsd/)** — fits, at 94% of the
   UP5K's logic. 128 KB of RAM in the four SPRAM blocks, an 8 KB boot ROM,
   console on the SD breakout pins.
@@ -120,10 +126,11 @@ across the cycle the way the real part drives an external bus.
 
 What has and has not run, kept honest: the Nexys A7-100T boots RomWBW's HBIOS
 and CP/M 2.2 on real silicon, off a bitstream in the board's QSPI flash. The
-Arty and C0-microSD builds are verified to a placed, routed, timing-closed
-bitstream and no further, because neither board was ever attached. The
-SD-backed disks read *and* write: CP/M copies a file to `C:`, and after
-reconfiguring the FPGA the file is still there and runs from the card.
+Arty, Icepi Zero and C0-microSD builds are verified to a placed, routed,
+timing-closed bitstream and no further, because none of those boards was ever
+attached. The SD-backed disks read *and* write: CP/M copies a file to `C:`,
+and after reconfiguring the FPGA the file is still there and runs from the
+card.
 [boards/nexys_a7_100t/romwbw](boards/nexys_a7_100t/romwbw/) has the bug that
 made writes fail -- a wait reply one clock too late to stall the read it
 belonged to -- and the measurement traps it cost along the way.
@@ -135,10 +142,13 @@ GPLv3 — see [LICENSE](LICENSE).
 The two `mig.prj` files are Digilent's, from their
 [vivado-boards](https://github.com/Digilent/vivado-boards) repository under the
 MIT licence, and are included unmodified so the DDR2 build needs no board-files
-install; see [THIRD-PARTY.txt](THIRD-PARTY.txt). Nothing else here is anyone
-else's: the RomWBW ROM and disk images the board runs are deliberately *not*
-committed, and are fetched from the
-[RomWBW](https://github.com/wwarthen/RomWBW) release package instead.
+install. The Icepi Zero's pin assignments come from
+[cheyao/icepi-zero](https://github.com/cheyao/icepi-zero)'s own constraint
+file, under the zlib licence, altered. Both are recorded in
+[THIRD-PARTY.txt](THIRD-PARTY.txt). Nothing else here is anyone else's: the
+RomWBW ROM and disk images the board runs are deliberately *not* committed,
+and are fetched from the [RomWBW](https://github.com/wwarthen/RomWBW) release
+package instead.
 
 ## Related Projects
 

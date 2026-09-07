@@ -30,3 +30,35 @@ boards/nexys_a7_100t/romwbw/mig.prj
   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
   SOFTWARE.
+
+
+boards/icepi_zero/icepi_zero.lpf
+boards/icepi_zero/sdram/icepi_zero_sdram.lpf
+
+  The pin assignments are from cheyao/icepi-zero
+  (https://github.com/cheyao/icepi-zero), gateware/icepi-zero.lpf, which is
+  the board designer's own constraint file. The SDRAM block in the second of
+  these is that file's SDRAM section unchanged; the rest is the subset of its
+  LOCATE and IOBUF lines this design uses, reordered, with the comments
+  rewritten and the clock and frequency constraints this design needs added.
+  Both files are therefore altered versions and are marked as such here.
+
+  zlib License
+
+  Copyright (C) 2024-2025 Cheyao
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.

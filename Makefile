@@ -34,7 +34,8 @@ gen $(GEN): tools/gen_z80.py tools/z80_enc.py
 boot sw/boot.hex: sw/boot.z80
 	$(PYTHON) tools/zasm.py sw/boot.z80 -o sw/boot.hex --size 32768
 
-sim: sim/tb_sst.vvp sim/tb_soc.vvp sim/tb_irq.vvp sim/tb_ddr2ram.vvp sim/tb_hdsk.vvp sim/tb_hdsk_soc.vvp
+sim: sim/tb_sst.vvp sim/tb_soc.vvp sim/tb_irq.vvp sim/tb_ddr2ram.vvp \
+     sim/tb_sdram.vvp sim/tb_sdram_soc.vvp sim/tb_hdsk.vvp sim/tb_hdsk_soc.vvp
 
 sim/tb_sst.vvp: sim/tb_sst.sv $(CORE) $(GEN)
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_sst.sv $(CORE)
@@ -49,6 +50,15 @@ sim/tb_irq.vvp: sim/tb_irq.sv $(CORE) $(GEN)
 # behavioural slave with deliberately awkward latency.
 sim/tb_ddr2ram.vvp: sim/tb_ddr2ram.sv $(SOC) rtl/mem/ddr2_ram.sv $(GEN) sw/boot.hex
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_ddr2ram.sv $(SOC) rtl/mem/ddr2_ram.sv
+
+# The SDRAM controller against a behavioural MT48LC16M16 that refuses anything
+# the chip would not accept, and then the whole SoC with its RAM behind it.
+sim/tb_sdram.vvp: sim/tb_sdram.sv sim/sdram_model.sv rtl/mem/sdram_ram.sv
+	$(IVERILOG) -g2012 -o $@ sim/tb_sdram.sv sim/sdram_model.sv rtl/mem/sdram_ram.sv
+
+sim/tb_sdram_soc.vvp: sim/tb_sdram_soc.sv sim/sdram_model.sv $(SOC) rtl/mem/sdram_ram.sv $(GEN) sw/boot.hex
+	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_sdram_soc.sv $(SOC) \
+	    rtl/mem/sdram_ram.sv sim/sdram_model.sv
 
 # Boot a stock RomWBW ROM.  The image is not in the repository; ROMWBW_ROM
 # points at one, the way Z80_TESTS points at the opcode suite:
@@ -85,6 +95,8 @@ test: sim
 	$(VVP) sim/tb_irq.vvp
 	$(VVP) sim/tb_soc.vvp
 	$(VVP) sim/tb_ddr2ram.vvp
+	$(VVP) sim/tb_sdram.vvp
+	$(VVP) sim/tb_sdram_soc.vvp
 	$(VVP) sim/tb_hdsk.vvp
 	$(VVP) sim/tb_hdsk_soc.vvp
 	$(PYTHON) tools/run_sst.py --all -n 20 --cycles

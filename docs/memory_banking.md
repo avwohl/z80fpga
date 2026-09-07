@@ -52,16 +52,34 @@ ROM mirrors across the whole of ROM bank 0 that way.
 (`rtl/mem/spram_ice40.sv`), which is 128 KB, exactly four banks. That part's
 block RAM cannot hold even one bank, so on a UP5K it is SPRAM or nothing.
 
+`USE_DDR2` and `USE_SDRAM` put the RAM off-chip, in the Nexys A7's DDR2
+through the MIG (`rtl/mem/ddr2_ram.sv`) or in the Icepi Zero's SDR SDRAM
+(`rtl/mem/sdram_ram.sv`). Neither can answer in a T-state and neither
+pretends to: both hold `wait_n` low until the byte is there, and the core
+freezes at the strobe T-state. They present the same `req`/`ready` interface
+to the SoC, so the wait-state logic and the HDSK DMA path do not know which
+one is behind them.
+
 | target | ROM | RAM | common bank |
 |---|---|---|---|
 | simulation (`sim/tb_soc.sv`) | 1 bank, 32 KB | 2 banks, 64 KB | `0x81` |
+| Nexys A7-100T | 2 banks, 64 KB | 8 banks, 256 KB | `0x87` |
+| Nexys A7-100T, `romwbw/` | 16 banks, 512 KB | 16 banks, 512 KB DDR2 | `0x8F` |
 | Arty A7-100T | 2 banks, 64 KB | 8 banks, 256 KB | `0x87` |
+| Icepi Zero | 1 bank, 32 KB | 2 banks, 64 KB | `0x81` |
+| Icepi Zero, `sdram/` | 1 bank, 32 KB | 16 banks, 512 KB SDRAM | `0x8F` |
 | C0-microSD | 8 KB, mirrored | 4 banks, 128 KB SPRAM | `0x83` |
 
 A build with `RAM_BANKS = 16` also fits the Arty's block RAM, at around 95% of
-it, and is the configuration that gives the RomWBW common-bank id. The full
-512 KB + 512 KB map does not fit in block RAM on any of these parts and wants
-the Arty's DDR3 — see [roadmap.md](roadmap.md).
+it, and is the configuration that gives the RomWBW common-bank id.
+
+The full 512 KB + 512 KB map fits in block RAM on no part here, and what to do
+about it depends on the part. On an XC7A100T the ROM half fits and the RAM
+half goes to DDR2, which is the Nexys `romwbw/` build. On the ECP5 the ROM
+half does not fit either — 126 KB is the ceiling for a byte-wide ROM on an
+LFE5U-25F, and 112 KB for a byte-wide RAM — so the Icepi's `sdram/` build has the RAM and only a 32 KB ROM
+bank, which is enough for the monitor and not for RomWBW. See
+[roadmap.md](roadmap.md).
 
 ## What is not implemented
 
