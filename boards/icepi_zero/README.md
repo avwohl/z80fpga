@@ -7,11 +7,11 @@ fastest of any target here, three times the Nexys A7's.
 
 The `-6` in that part number is the speed grade, and it is not a detail. The
 Makefile passes `--speed 6` so the timing report is for the part that is
-actually on the board: the same design and the same placement report 29.17 MHz
-at grade 6 and 37.01 MHz at grade 8, which is the difference between a pass
-with 17% to spare and a pass with 48%. Grade 6 is also nextpnr's default for
-`--25k`, so the flag changes nothing today and stops the number quietly
-becoming optimistic if that ever changes.
+actually on the board: one placement of this design reported 29.17 MHz at
+grade 6 and 37.01 MHz at grade 8, which is the difference between a pass with
+17% to spare and one with 48%, for the same bitstream. Grade 6 is also
+nextpnr's default for `--25k`, so the flag changes nothing today and stops the
+number quietly becoming optimistic if that ever changes.
 
 The part number is from
 [cheyao/icepi-zero](https://github.com/cheyao/icepi-zero)'s
@@ -49,11 +49,11 @@ device on WinUSB is not a COM port any more. None of this has been tried here;
 ## What it builds to
 
 ```
-TRELLIS_COMB    6198 / 24288   25%
+TRELLIS_COMB    6202 / 24288   25%
 TRELLIS_FF       419 / 24288    1%
 DP16KD            48 /    56   85%
 TRELLIS_IO        10 /   197    5%
-Max frequency for clock 'clk_sys': 29.17 MHz (PASS at 25.00 MHz)
+Max frequency for clock 'clk_sys': 28.57 MHz (PASS at 25.00 MHz)
 ```
 
 Logic is not the constraint on this part; block RAM is. 48 of the 56 EBRs go
@@ -66,7 +66,9 @@ A third RAM bank does not fit, and the reason is not the eight spare blocks.
 `sync_ram` allocates `2**AW`, and `RAM_AW` defaults to `15 + $clog2(RAM_BANKS)`
 — so three banks round up to a 17-bit, 128 KB store, which is 64 blocks on its
 own. Two banks is the ceiling on this part. For more than 64 KB of RAM see
-[sdram/](sdram/), which puts all sixteen banks in the board's 32 MB of SDRAM.
+[sdram/](sdram/), which puts all sixteen banks in the board's 32 MB of SDRAM,
+and [romwbw/](romwbw/), which puts the ROM there too and fetches it off the
+microSD card at power-up.
 
 ## Configuration
 
@@ -97,7 +99,7 @@ So the honest thing is to run the fabric at a rate the core really closes at.
 Routed, this design reports **27.9 to 29.5 MHz** across four placement seeds,
 so 25 MHz passes and 50 MHz misses by a factor of nearly two.
 
-That leaves between 12% and 18% of margin, which is worth stating plainly
+That leaves about 14% of margin, which is worth stating plainly
 rather than burying: it is a pass, on the right speed grade, but it is not a
 comfortable one, and nextpnr's model is a single timing corner with no
 temperature or voltage derating of its own. If a board ever turns out to be
@@ -140,9 +142,8 @@ of that. Both use the same `openFPGALoader -b icepi-zero` this Makefile does.
 
 - **The GPDI/HDMI output, USB and the Pi header.** Out of scope; nothing in
   this SoC has a use for them.
-- **The microSD slot, and so HDSK and CP/M.** Not because the slot is
-  awkward — `rtl/soc/sd_spi.sv` would drive it unchanged — but because the
-  thing that would use it cannot fit yet. RomWBW wants 512 KB of ROM, and
-  126 KB is the most byte-wide ROM this part's block RAM can hold. Getting
-  there needs the ROM staged into SDRAM from somewhere at power-up; see
-  [../../docs/roadmap.md](../../docs/roadmap.md).
+- **The microSD slot, and so HDSK and CP/M.** Not in *this* build, which is
+  the deliberately small one. [romwbw/](romwbw/) has them: the full
+  512 KB + 512 KB map with the ROM half fetched off the card at power-up,
+  because 126 KB is the most byte-wide ROM this part's block RAM can hold and
+  a bitstream therefore cannot carry a RomWBW image.

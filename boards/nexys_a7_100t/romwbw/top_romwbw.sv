@@ -137,6 +137,11 @@ module top_romwbw (
       .CONSOLE_SSER (1'b1),               // stock RomWBW drives SSER
       .FLOW_CTRL    (1'b1),               // RTS/CTS on the console
       .USE_HDSK     (1'b1),               // HDSK0:/HDSK1: on port 0xFD
+      // Pinned to the sector-buffer shape this board was verified with.  The
+      // portable one is better everywhere else and is the default; here it
+      // makes place_design fail on a design at 94.81% of the part's block RAM.
+      // rtl/soc/sd_spi.sv has the whole of it.
+      .SD_BUF_MUX   (1'b0),
       .USE_DDR2     (1'b1),
       .DDR2_BASE    (0),
       .ROM_BANKS    (16),                 // 512 KB in block RAM

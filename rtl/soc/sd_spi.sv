@@ -35,7 +35,11 @@
 module sd_spi #(
     parameter int CLK_HZ    = 81_250_000,
     parameter int INIT_HZ   = 390_000,     // slow clock for initialisation
-    parameter int FAST_HZ   = 6_000_000    // once the card is up
+    parameter int FAST_HZ   = 6_000_000,   // once the card is up
+    // How the sector buffer is shaped.  A tool question rather than a design
+    // one; the long comment at the buffer says why, and why the default is
+    // the portable answer while one board pins it to the other.
+    parameter bit BUF_MUX   = 1'b1
 ) (
     input  logic        clk,
     input  logic        rst_n,
@@ -68,20 +72,71 @@ module sd_spi #(
   localparam int DW       = $clog2(DIV_SLOW + 1);
 
   // ------------------------------------------------------------- the buffer
+  //
+  // BUF_MUX picks between two spellings of the same 512 bytes, and the choice
+  // is forced by the tools rather than by the design.
+  //
+  // Written the plain way -- two write ports, which is what BUF_MUX = 0 is --
+  // **no** memory on either family can hold it, and both tools fail at it
+  // silently.  yosys says "using FF mapping for memory", and forcing the issue
+  // with a ram_style attribute says "no valid mapping found".  Vivado says
+  // nothing at all: the Nexys RomWBW build's utilisation report shows zero
+  // RAMB18s and carries the 512 bytes as 4096 flip-flops, which on a part with
+  // 126,800 registers nobody noticed.  On an ECP5 with 24,288 LUT4s the
+  // identical code made this module alone **17,687 LUT4s**, three quarters of
+  // an LFE5U-25F before the Z80 was placed at all.
+  //
+  // BUF_MUX = 1 muxes the two writers onto one port, which both tools can then
+  // infer a real memory for -- two EBRs and 641 LUT4s on an ECP5.  The mux
+  // costs nothing, because the writers are already exclusive in time: sd_bufw
+  // fills the buffer from the card during a read and buf_we fills it from
+  // memory before a write, and whoever is not driving is waiting on busy.
+  // Should they collide anyway sd_bufw wins, which is what the two-port form
+  // did -- its second assignment was the later one in the same block.
+  //
+  // So why is 0 still here?  Because the Nexys RomWBW build is the only thing
+  // in this repository that has run on hardware, and it sits at 94.81% of that
+  // part's block RAM -- 128 of 135 RAMB36 tiles, for a 512 KB ROM that Vivado
+  // cascades in pairs.  Switching this buffer to the muxed form makes its
+  // place_design fail with sixty-four REQP-1962 "cascade ADDR15 pin check"
+  // errors.  Not because of the block RAM it adds: asking for the muxed form
+  // as distributed RAM keeps the tile count at exactly the baseline's 128 and
+  // it fails the same way.  Something about that build is simply delicate, and
+  // the way to keep a verified bitstream verified is not to perturb it.
+  // boards/nexys_a7_100t/romwbw/ therefore pins BUF_MUX to 0 and gets the
+  // netlist it was proved with; everything else takes the default.
+  //
+  // blkbuf stays at module scope rather than going inside a generate, so that
+  // the 0 case is not merely equivalent to the old code but is spelled the
+  // same, down to the cell names.
   logic [7:0] blkbuf [0:511];
   logic [8:0] sd_bufa;
   logic [7:0] sd_bufd;
   logic       sd_bufw;
+  logic [7:0] buf_rdata_sd;
+
+  logic [8:0] bw_addr;
+  logic [7:0] bw_data;
+  logic       bw_en;
+
+  assign bw_en   = buf_we | sd_bufw;
+  assign bw_addr = sd_bufw ? sd_bufa : buf_addr;
+  assign bw_data = sd_bufw ? sd_bufd : buf_wdata;
 
   always_ff @(posedge clk) begin
-    if (buf_we) blkbuf[buf_addr] <= buf_wdata;
+    if (BUF_MUX) begin
+      if (bw_en) blkbuf[bw_addr] <= bw_data;
+    end else begin
+      if (buf_we) blkbuf[buf_addr] <= buf_wdata;
+    end
+    // The read is of the memory as it stands before this clock's write, which
+    // is what hdsk relies on either way.
     buf_rdata <= blkbuf[buf_addr];
-    if (sd_bufw) blkbuf[sd_bufa] <= sd_bufd;
+    if (!BUF_MUX && sd_bufw) blkbuf[sd_bufa] <= sd_bufd;
   end
 
-  // A second, read-only port for the SPI side, so the card can stream out of
-  // the buffer while whoever owns buf_addr is doing something else.
-  logic [7:0] buf_rdata_sd;
+  // A second read port for the SPI side, so the card can stream out of the
+  // buffer while whoever owns buf_addr is doing something else.
   always_ff @(posedge clk) buf_rdata_sd <= blkbuf[sd_bufa];
 
   // ---------------------------------------------------------- SPI byte engine

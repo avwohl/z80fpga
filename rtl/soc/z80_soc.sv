@@ -22,9 +22,20 @@ module z80_soc #(
     parameter int MEM_WAIT   = 0,           // extra T-states per memory cycle
     parameter bit FLOW_CTRL  = 1'b0,        // RTS/CTS on the console
     parameter bit USE_HDSK   = 1'b0,        // SIMH HDSK on port 0xFD, backed by microSD
+    // How sd_spi shapes its sector buffer.  The default is the portable one;
+    // rtl/soc/sd_spi.sv says at length why the Nexys RomWBW build is the
+    // exception and pins it to 0.
+    parameter bit SD_BUF_MUX = 1'b1,
     parameter bit USE_DDR2   = 1'b0,        // RAM banks live in DDR2, not block RAM
     parameter int DDR2_BASE  = 0,           // byte offset of the RAM in DDR2
     parameter bit USE_SDRAM  = 1'b0,        // RAM banks live in SDR SDRAM
+    // The ROM banks live in SDRAM too, staged off the microSD at power-up by
+    // rtl/soc/rom_loader.sv.  Needs USE_SDRAM and USE_HDSK: the loader shares
+    // the latter's sd_spi.  With this set, ROM_INIT is not used -- the image
+    // comes from the card, not from the bitstream.
+    parameter bit SDRAM_ROM  = 1'b0,
+    parameter logic [31:0] ROM_LBA = 32'h0040_0000,   // its first block
+    parameter int ROM_BLOCKS = 1024,                  // 512 KB of it
     parameter int ROM_BANKS = 1,            // x 32 KB
     parameter int RAM_BANKS = 2,
     // Backing store size, as an address width.  Defaults to the whole bank
@@ -82,6 +93,11 @@ module z80_soc #(
     // thing worth putting on an LED if a board is mute.  High when there is no
     // SDRAM to initialise.
     output logic         sdram_init_done,
+    // The staged ROM is in memory (rom_done) or never will be (rom_failed).
+    // Both low means the card has not come up yet.  High and low respectively
+    // when there is no staging to do.
+    output logic         rom_done,
+    output logic         rom_failed,
 
     output logic [26:0]  m_axi_araddr,
     output logic         m_axi_arvalid,
@@ -93,6 +109,25 @@ module z80_soc #(
 
   localparam int ROM_AW = (ROM_AW_P != 0) ? ROM_AW_P : 15 + $clog2(ROM_BANKS);
   localparam int RAM_AW = (RAM_AW_P != 0) ? RAM_AW_P : 15 + $clog2(RAM_BANKS);
+
+  // With the ROM in the chip as well, the physical address grows the bit that
+  // says which of the two spaces it is: ROM at the bottom of the megabyte,
+  // RAM at the top.
+  localparam int SDRAM_AW = SDRAM_ROM ? 20 : RAM_AW;
+
+  // synthesis translate_off
+  initial if (SDRAM_ROM && !(USE_SDRAM && USE_HDSK))
+    $fatal(1, "z80_soc: SDRAM_ROM needs USE_SDRAM and USE_HDSK -- the loader stages into the one and shares the other's sd_spi");
+  // synthesis translate_on
+
+  // The loader's side of the memory, and its two flags.  Tied off below when
+  // there is no loader.
+  logic          ldr_req, ldr_we;
+  logic [19:0]   ldr_addr;
+  logic  [7:0]   ldr_wdata;
+  logic          loading;
+
+  assign loading = SDRAM_ROM && !rom_done;
 
   // --------------------------------------------------------------- clock enable
   localparam int DIVW = $clog2(CPU_DIV) + 1;
@@ -153,11 +188,18 @@ module z80_soc #(
     end
   endgenerate
 
+  // The core, and only the core, waits for the staged ROM.  Everything else
+  // comes out of reset with the rest of the design: the loader needs sd_spi
+  // running, and hdsk cannot do anything until a port write reaches it, which
+  // cannot happen while this is low.
+  logic core_rst_n;
+  assign core_rst_n = rst_n && rom_done;
+
   z80_core #(
       .UCODE_MEM (UCODE_MEM),
       .DISP_MEM  (DISP_MEM)
   ) u_cpu (
-      .clk (clk), .rst_n (rst_n), .clk_en (clk_en),
+      .clk (clk), .rst_n (core_rst_n), .clk_en (clk_en),
       .a (a), .din (din), .dout (dout),
       .mreq_n (mreq_n), .iorq_n (iorq_n), .rd_n (rd_n), .wr_n (wr_n),
       .m1_n (m1_n), .rfsh_n (rfsh_n), .halt_n (halt_n), .busak_n (busak_n),
@@ -192,15 +234,36 @@ module z80_soc #(
   // mem_cycle: mreq_n stays high for the whole stretched cycle, so the CPU is
   // not using memory and cannot be surprised by the address moving.
   assign mem_addr   = dma_req ? dma_addr : a;
-  assign mem_wr_eff = dma_req ? dma_we   : (mem_we && !sel_rom);
+  // !sel_rom on both arms, not just the CPU's.  A DMA write while a ROM bank
+  // is selected has no business landing anywhere, and with the ROM in SDRAM
+  // it would be overwriting the firmware rather than merely shadowing it.
+  // Unreachable before this: the only build with a DMA had its RAM in DDR2,
+  // whose req is ram_cycle, which did carry the guard.
+  assign mem_wr_eff = (dma_req ? dma_we : mem_we) && !sel_rom;
   assign mem_wdata  = dma_req ? dma_wdata : dout;
-  assign dma_rdata  = sel_rom ? rom_rdata : ram_rdata;
+  assign dma_rdata  = (sel_rom && !SDRAM_ROM) ? rom_rdata : ram_rdata;
 
-  assign ram_cycle = dma_req ? !sel_rom
-                             : (!mreq_n && (!rd_n || !wr_n) && !sel_rom);
+  // With the ROM in the chip, every memory cycle is a cycle of the one memory,
+  // so sel_rom stops excusing anything from it.
+  assign ram_cycle = dma_req ? (SDRAM_ROM || !sel_rom)
+                             : (!mreq_n && (!rd_n || !wr_n) &&
+                                (SDRAM_ROM || !sel_rom));
 
-  sync_ram #(.AW (ROM_AW), .READ_ONLY (1'b1), .INIT_FILE (ROM_INIT)) u_rom (
-      .clk (clk), .en (1'b1), .addr (phys[ROM_AW-1:0]),
+  // ROM at the bottom of the megabyte, RAM at the top.  Without SDRAM_ROM the
+  // top bit is not there and this is the plain physical address.
+  logic [19:0] sdram_addr;
+  assign sdram_addr = {SDRAM_ROM ? ~sel_rom : 1'b0, phys[18:0]};
+
+  // The block RAM ROM is always instantiated, and shrunk to two bytes rather
+  // than removed when the image lives in the SDRAM instead.  Removing it would
+  // mean a generate block, which puts that block's name into every cell
+  // underneath it -- and the Nexys RomWBW build's ROM is 128 RAMB36 tiles that
+  // Vivado cascades in pairs, which is delicate enough already.  Two bytes
+  // costs nothing and leaves that build's hierarchy exactly as it was.
+  localparam int ROM_INST_AW = SDRAM_ROM ? 1 : ROM_AW;
+
+  sync_ram #(.AW (ROM_INST_AW), .READ_ONLY (1'b1), .INIT_FILE (ROM_INIT)) u_rom (
+      .clk (clk), .en (1'b1), .addr (phys[ROM_INST_AW-1:0]),
       .wdata (dout), .we (1'b0), .rdata (rom_rdata)
   );
 
@@ -232,10 +295,14 @@ module z80_soc #(
       // Same bargain as the DDR2 bank and for the same reason: the chip cannot
       // answer in a T-state, so it holds wait_n low until it has.  The request
       // is the ungated bus cycle here too.
-      sdram_ram #(.CLK_HZ (CLK_HZ), .AW (RAM_AW)) u_ram (
+      // While the loader is running it owns the port outright.  Nothing else
+      // wants it: the core is in reset and hdsk answers only the core.
+      sdram_ram #(.CLK_HZ (CLK_HZ), .AW (SDRAM_AW)) u_ram (
           .clk (clk), .rst_n (rst_n),
-          .req (ram_cycle), .we (mem_wr_eff),
-          .addr (phys[RAM_AW-1:0]), .wdata (mem_wdata),
+          .req   (loading ? ldr_req   : ram_cycle),
+          .we    (loading ? ldr_we    : mem_wr_eff),
+          .addr  (loading ? SDRAM_AW'(ldr_addr) : sdram_addr[SDRAM_AW-1:0]),
+          .wdata (loading ? ldr_wdata : mem_wdata),
           .rdata (ram_rdata), .ready (ram_ready), .init_done (sdram_init_done),
           .sd_a (sdram_a), .sd_ba (sdram_ba), .sd_dqm (sdram_dqm),
           .sd_cs_n (sdram_cs_n), .sd_ras_n (sdram_ras_n),
@@ -310,9 +377,10 @@ module z80_soc #(
       // when ram_ready says so when it is off-chip.
       logic dma_req_d;
       always_ff @(posedge clk) dma_req_d <= dma_req;
-      assign dma_ack = !dma_req                             ? 1'b0
-                     : (!sel_rom && (USE_DDR2 || USE_SDRAM)) ? ram_ready
-                                                             : dma_req_d;
+      assign dma_ack = !dma_req ? 1'b0
+                     : ((SDRAM_ROM || !sel_rom) && (USE_DDR2 || USE_SDRAM))
+                         ? ram_ready
+                         : dma_req_d;
 
       hdsk u_hdsk (
           .clk (clk), .rst_n (rst_n),
@@ -334,16 +402,59 @@ module z80_soc #(
           .sd_buf_we (sdb_we), .sd_buf_rdata (sdb_rdata)
       );
 
-      sd_spi #(.CLK_HZ (CLK_HZ)) u_sd (
+      // ------------------------------------------------- staging the ROM
+      // The loader and hdsk share one sd_spi, and the handover needs no
+      // arbitration because it is not a handover: the loader runs to
+      // completion while the core is in reset, and hdsk cannot ask for
+      // anything until the core is out of it.  `loading` is that boundary.
+      logic  [8:0] ldr_bufa;
+      logic        ldr_rd;
+      logic [31:0] ldr_lba;
+
+      if (SDRAM_ROM) begin : g_loader
+        rom_loader #(
+            .BLOCKS (ROM_BLOCKS), .LBA (ROM_LBA), .AW (20)
+        ) u_loader (
+            .clk (clk), .rst_n (rst_n),
+            .done (rom_done), .failed (rom_failed),
+            .sd_start_rd (ldr_rd), .sd_lba (ldr_lba),
+            .sd_busy (sd_busy), .sd_err (sd_err), .sd_ready (sd_rdy),
+            .sd_buf_addr (ldr_bufa), .sd_buf_rdata (sdb_rdata),
+            .mem_req (ldr_req), .mem_we (ldr_we), .mem_addr (ldr_addr),
+            .mem_wdata (ldr_wdata), .mem_ready (ram_ready)
+        );
+      end else begin : g_noloader
+        assign rom_done   = 1'b1;
+        assign rom_failed = 1'b0;
+        assign ldr_rd     = 1'b0;
+        assign ldr_lba    = 32'd0;
+        assign ldr_bufa   = 9'd0;
+        assign ldr_req    = 1'b0;
+        assign ldr_we     = 1'b0;
+        assign ldr_addr   = 20'd0;
+        assign ldr_wdata  = 8'd0;
+      end
+
+      sd_spi #(.CLK_HZ (CLK_HZ), .BUF_MUX (SD_BUF_MUX)) u_sd (
           .clk (clk), .rst_n (rst_n),
-          .start_rd (sd_rd), .start_wr (sd_wr), .lba (sd_lba),
+          .start_rd (loading ? ldr_rd  : sd_rd),
+          .start_wr (loading ? 1'b0    : sd_wr),
+          .lba      (loading ? ldr_lba : sd_lba),
           .busy (sd_busy), .err (sd_err), .ready (sd_rdy), .dbg (sd_dbg), .dbg_state (sd_dbg_state),
-          .buf_addr (sdb_addr), .buf_wdata (sdb_wdata), .buf_we (sdb_we),
+          .buf_addr  (loading ? ldr_bufa : sdb_addr),
+          .buf_wdata (sdb_wdata),
+          .buf_we    (loading ? 1'b0 : sdb_we),
           .buf_rdata (sdb_rdata),
           .sd_sck (sd_sck), .sd_mosi (sd_mosi), .sd_miso (sd_miso),
           .sd_cs (sd_cs)
       );
     end else begin : g_nohdsk
+      assign rom_done   = 1'b1;
+      assign rom_failed = 1'b0;
+      assign ldr_req    = 1'b0;
+      assign ldr_we     = 1'b0;
+      assign ldr_addr   = 20'd0;
+      assign ldr_wdata  = 8'd0;
       assign hdsk_rdata = 8'hFF;
       assign hdsk_hit   = 1'b0;
       assign hdsk_wait  = 1'b0;
@@ -368,10 +479,10 @@ module z80_soc #(
     else                         port_rdata = 8'hFF;
   end
 
-  assign din = !iorq_n    ? port_rdata
-             : !bank_valid ? 8'hFF
-             : sel_rom     ? rom_rdata
-                           : ram_rdata;
+  assign din = !iorq_n                   ? port_rdata
+             : !bank_valid               ? 8'hFF
+             : (sel_rom && !SDRAM_ROM)   ? rom_rdata
+                                         : ram_rdata;
 
   // pins this SoC has no use for, tied off so lint does not complain
   logic unused;

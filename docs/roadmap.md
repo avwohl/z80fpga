@@ -120,32 +120,19 @@ rather than trying to make one engine cover both bus models.
   the console is at 0x00/0x01 the way the emulators present it, but nothing
   has actually run a RomWBW ROM yet. That is the test that would prove the
   whole thing, and it needs either the DDR3 work or a cut-down ROM.
-- **RomWBW on the Icepi Zero**, which needs the ROM staged into memory rather
-  than baked into the bitstream. The board's 32 MB of SDRAM is far more than
-  the 512 KB + 512 KB map wants, and `boards/icepi_zero/sdram/` already has
-  the RAM half of it; the obstacle is the other half. An ECP5 LFE5U-25F holds
-  at most 126 KB of byte-wide ROM in block RAM, so on this part the ROM cannot
-  come out of the bitstream the way it does on the Nexys — something has to
-  copy the image into SDRAM before the first instruction fetch. The pieces are
-  mostly here already: `rtl/soc/sd_spi.sv` reads 512-byte blocks from a
-  microSD card and has been verified against a real one, and the board has a
-  slot. What is missing is a loader state machine that reads the image into
-  the SDRAM's ROM space at power-up, an arbiter in `sdram_ram.sv` so the
-  loader and the CPU can share the one port, holding the core in reset until
-  it is done, and a `sel_rom` path in `z80_soc.sv` that goes to SDRAM instead
-  of to `sync_ram` — which also means `sdram_ram`'s `AW` grows from 19 to 20
-  to address both halves. The same machinery would let the C0-microSD boot
-  from its card.
-
-  Two things that are cheap on the boards that have run would have to be
-  looked at first. `sd_spi.sv`'s 512-byte `blkbuf` is written from two places,
-  which stops yosys inferring a block RAM for it; Vivado infers one anyway, so
-  it has never mattered, but on an ECP5 the same code becomes flip-flops and
-  costs thousands of LUTs. And `z80_soc.sv`'s DMA arm of `mem_wr_eff` has no
-  `!sel_rom` guard, so a DMA write while a ROM bank is selected would land in
-  RAM at the same physical address. Neither is reachable today — the only
-  build with `USE_HDSK` has its RAM in DDR2, whose `req` is gated by
-  `ram_cycle`, which does carry the guard — but both are in the way of this.
+- **A RomWBW image actually through the Icepi Zero's loader.**
+  `boards/icepi_zero/romwbw/` stages the ROM off the microSD card into SDRAM
+  and `sim/tb_romload.sv` proves the mechanism, but with a 2 KB boot monitor
+  as the image. No RomWBW `.rom` has been through that path, in simulation or
+  otherwise, and no Icepi Zero has run any of it. The 512 KB case differs from
+  the 2 KB one only in the block count, which is a parameter -- but "only"
+  is doing work there, and a bench that stages the real image would be worth
+  the runtime.
+- **A bus grant, so the loader need not borrow the reset.** The core is held
+  in reset while the image is staged, which is simple and correct and means
+  the loader owns the memory by default. A real BUSRQ/BUSAK would let a
+  loader run against a live CPU, which is what a second-stage loader or a
+  debugger would want. `busak_n` mirrors `busrq_n` today.
 - **Area.** The core is 4641 LUT4s. The obvious remaining reductions are
   sharing the two register-file read ports (they are used in different
   T-states) and moving the micro-code ROM into block RAM, which needs the

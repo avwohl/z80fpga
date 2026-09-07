@@ -62,6 +62,46 @@ Verilator counts every task that does a non-blocking assignment as its own
 process, and all of them are called from the single `always_ff` in
 `z80_core.sv`.
 
+## Block RAM that is not block RAM
+
+A memory with **two write ports has no RAM mapping on either family**, and
+both tools fail at it silently. `sd_spi.sv`'s 512-byte sector buffer was
+written that way. yosys says "using FF mapping for memory" and, if forced with
+a `ram_style` attribute, "no valid mapping found"; Vivado says nothing at all
+-- the Nexys RomWBW utilisation report shows **zero** RAMB18s and carries the
+512 bytes as 4096 flip-flops, which on a part with 126,800 registers nobody
+noticed. On an ECP5 the identical code made `sd_spi` alone **17,687 LUT4s**,
+three quarters of an LFE5U-25F.
+
+So: **one write port, however many reads.** If two things write a buffer,
+check whether they are exclusive in time -- they usually are -- and mux them.
+`grep "mapping for memory" yosys.log` after any change to a memory, and read
+the RAMB rows of Vivado's utilisation report rather than assuming.
+
+## The Nexys RomWBW build is delicate, and must not be perturbed
+
+It is the only bitstream here that has run on hardware, and it sits at **94.81%
+of the part's block RAM** -- 128 of 135 RAMB36 tiles, a 512 KB ROM that Vivado
+cascades in pairs. Changing `sd_spi`'s buffer to the muxed form above makes its
+`place_design` fail with **sixty-four `REQP-1962` "cascade ADDR15 pin check"**
+errors. That was bisected: the pushed commit builds clean, that one file on top
+of it does not.
+
+It is not the block RAM the change adds. Asking for the muxed buffer as
+`ram_style = "distributed"` keeps the tile count at exactly the baseline's 128
+and it fails identically. Nor is it cell naming -- the same failure appears
+with the hierarchy untouched. Something about that placement is simply fragile.
+
+So `sd_spi` carries a `BUF_MUX` parameter, defaulting to the portable form,
+and `boards/nexys_a7_100t/romwbw/top_romwbw.sv` pins it to 0 to get the
+netlist it was proved with. `SDRAM_ROM` shrinks `u_rom` to two bytes rather
+than removing it for the same instinct: a generate block would rename every
+cell under that ROM.
+
+**Rebuild that board after any change to `rtl/soc/` or `rtl/mem/`**, and check
+for `ERROR: [DRC` in the log -- `place_design` failing is the failure mode,
+and it takes about 25 minutes to find out.
+
 ## Board builds
 
 `boards/arty_a7_100t` and `boards/nexys_a7_100t` want Vivado;

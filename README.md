@@ -31,7 +31,7 @@ from HALT, each checked against the databook's T-state count.
 | | |
 |---|---|
 | `rtl/core/` | the CPU: ALU, sequencer, and the generated ROMs |
-| `rtl/soc/` | banked-memory MMU, UART, and a small SoC around the core |
+| `rtl/soc/` | banked-memory MMU, UART, microSD and HDSK, the ROM loader, and a small SoC around the core |
 | `rtl/mem/` | block-RAM, iCE40 SPRAM, DDR2 and SDRAM backing stores |
 | `tools/gen_z80.py` | the instruction-set description and the ROM generator |
 | `tools/run_sst.py` | the SingleStepTests harness |
@@ -114,10 +114,14 @@ across the cycle the way the real part drives an external bus.
   8.33 MHz Z80, 64 KB ROM and 256 KB RAM in block RAM. Timing-closed but never
   run: no Arty was ever attached.
 - **[Icepi Zero](boards/icepi_zero/)** — an ECP5 LFE5U-25F in a Pi Zero
-  footprint, and the fastest Z80 here at 25 MHz. 32 KB of ROM and 64 KB of
-  RAM in block RAM; [`sdram/`](boards/icepi_zero/sdram/) puts the full 512 KB
-  of RAM in the board's SDRAM instead. yosys and nextpnr, and the board
-  programs itself over its own USB-C.
+  footprint, and the fastest Z80 here at 25 MHz. Three builds:
+  32 KB of ROM and 64 KB of RAM in block RAM,
+  [`sdram/`](boards/icepi_zero/sdram/) with the full 512 KB of RAM in the
+  board's SDRAM, and [`romwbw/`](boards/icepi_zero/romwbw/) with the ROM in
+  there too — fetched off the microSD card at power-up, because 126 KB is all
+  the byte-wide ROM this part's block RAM can hold and a bitstream therefore
+  cannot carry a RomWBW image. yosys and nextpnr, and the board programs
+  itself over its own USB-C.
 - **[Signaloid C0-microSD](boards/c0_microsd/)** — fits, at 94% of the
   UP5K's logic. 128 KB of RAM in the four SPRAM blocks, an 8 KB boot ROM,
   console on the SD breakout pins.

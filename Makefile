@@ -35,7 +35,8 @@ boot sw/boot.hex: sw/boot.z80
 	$(PYTHON) tools/zasm.py sw/boot.z80 -o sw/boot.hex --size 32768
 
 sim: sim/tb_sst.vvp sim/tb_soc.vvp sim/tb_irq.vvp sim/tb_ddr2ram.vvp \
-     sim/tb_sdram.vvp sim/tb_sdram_soc.vvp sim/tb_hdsk.vvp sim/tb_hdsk_soc.vvp
+     sim/tb_sdram.vvp sim/tb_sdram_soc.vvp sim/tb_romload.vvp \
+     sim/tb_hdsk.vvp sim/tb_hdsk_soc.vvp
 
 sim/tb_sst.vvp: sim/tb_sst.sv $(CORE) $(GEN)
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_sst.sv $(CORE)
@@ -59,6 +60,18 @@ sim/tb_sdram.vvp: sim/tb_sdram.sv sim/sdram_model.sv rtl/mem/sdram_ram.sv
 sim/tb_sdram_soc.vvp: sim/tb_sdram_soc.sv sim/sdram_model.sv $(SOC) rtl/mem/sdram_ram.sv $(GEN) sw/boot.hex
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_sdram_soc.sv $(SOC) \
 	    rtl/mem/sdram_ram.sv sim/sdram_model.sv
+
+# A ROM image staged off a card into SDRAM and then executed out of it.  Four
+# blocks rather than the 1024 a RomWBW image needs: enough to prove the
+# sequencing, short enough to simulate, and the monitor is in the first one.
+sim/boot2k.hex: sw/boot.z80
+	$(PYTHON) tools/zasm.py sw/boot.z80 -o $@ --size 2048
+
+ROMLOAD := rtl/mem/sdram_ram.sv rtl/soc/rom_loader.sv rtl/soc/sd_spi.sv \
+           rtl/soc/hdsk.sv sim/sdram_model.sv sim/sd_card.sv
+
+sim/tb_romload.vvp: sim/tb_romload.sv $(ROMLOAD) $(SOC) $(GEN) sim/boot2k.hex
+	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_romload.sv $(SOC) $(ROMLOAD)
 
 # Boot a stock RomWBW ROM.  The image is not in the repository; ROMWBW_ROM
 # points at one, the way Z80_TESTS points at the opcode suite:
@@ -97,6 +110,7 @@ test: sim
 	$(VVP) sim/tb_ddr2ram.vvp
 	$(VVP) sim/tb_sdram.vvp
 	$(VVP) sim/tb_sdram_soc.vvp
+	$(VVP) sim/tb_romload.vvp
 	$(VVP) sim/tb_hdsk.vvp
 	$(VVP) sim/tb_hdsk_soc.vvp
 	$(PYTHON) tools/run_sst.py --all -n 20 --cycles

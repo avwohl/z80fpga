@@ -25,6 +25,10 @@ the reason is that the ROM is the only bank whose contents have to survive to
 the first instruction fetch — DDR2 comes up empty and there is nothing to fill
 it from.
 
+(If you want the ROM in there as well, and RomWBW with it, that is
+[../romwbw/](../romwbw/). This build is the halfway house: the ROM still
+comes out of the bitstream, so it needs no card and nothing prepared.)
+
 Here the same reasoning applies and the sizes do not. A byte-wide ROM packs
 at 2304 bytes per EBR on an ECP5 — yosys uses the 512x36 mode and all 18 Kbit
 of the block — and the LFE5U-25F has 56 of them, so 126 KB is the ceiling for
@@ -36,15 +40,15 @@ enough for the boot monitor, which is what this build runs — and the RAM, all
 ## What it builds to
 
 ```
-TRELLIS_COMB    6700 / 24288   27%
+TRELLIS_COMB    6371 / 24288   26%
 TRELLIS_FF       515 / 24288    2%
 DP16KD            16 /    56   28%
 TRELLIS_IO        49 /   197   24%
 SIOLOGIC           1 /    69    1%      (the ODDR on sdram_clk)
-Max frequency for clock 'clk_sys': 28.36 MHz (PASS at 25.00 MHz)
+Max frequency for clock 'clk_sys': 29.13 MHz (PASS at 25.00 MHz)
 ```
 
-Moving 64 KB of RAM out of the EBRs gives 32 of them back, at the cost of 502
+Moving 64 KB of RAM out of the EBRs gives 32 of them back, at the cost of 169
 logic cells and 96 flip-flops against the block RAM build — a net figure, not
 the controller's alone, since the block RAM it replaces had an address decode
 of its own.

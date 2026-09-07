@@ -118,6 +118,33 @@ merely sufficient: the model's clock is the inverted fabric clock, the way the
 board wires it, and the bench fails if the capture is one clock out in either
 direction.
 
+## Staging the ROM
+
+```
+vvp sim/tb_romload.vvp
+```
+
+The one bench where nothing in the memory path comes out of the bitstream.
+`sim/tb_romload.sv` puts a ROM image on the behavioural card, lets
+`rtl/soc/rom_loader.sv` fetch it into the behavioural SDRAM while the core is
+held in reset, compares the chip's contents against the original byte for
+byte, and then has the Z80 execute it until the monitor prints its banner and
+echoes what is typed at it.
+
+Both halves of that are needed. The byte compare catches a staging bug the
+console would survive — most of the image is padding, and a monitor whose text
+is intact prints a perfectly good banner out of a ROM whose top half is wrong.
+The console catches a decode bug the compare would survive, because the
+compare only ever looks at the ROM window.
+
+Four ways of breaking it were tried, and each makes it fail: the loader
+ignoring `ROM_LBA`, its buffer read off by one, the core released before
+staging finished, and the ROM and RAM windows landing on the same megabyte.
+The third of those is why the bench watches `mreq_n` rather than watching for
+early console output: a core let go early fetches zeros, which are `NOP`s,
+walks the whole 64 KB and arrives back at 0000 to run the firmware properly,
+printing a banner that looks entirely correct.
+
 ## The interrupt tests
 
 The SingleStepTests suite does not exercise interrupt entry at all, so
@@ -154,8 +181,6 @@ the end of EI cannot accept an interrupt and the next one can.
 - **The SDRAM, against a real chip.** `sim/sdram_model.sv` is a model, and a
   model agreeing with the controller proves they agree, not that either
   matches the part on the board.
-- **`USE_SDRAM` together with `USE_HDSK`.** The HDSK DMA takes its
-  acknowledgement from the same `ram_ready` for both off-chip backends, but
-  only the DDR2 half of that is exercised, by `sim/tb_hdsk_soc.sv`. No board
-  builds the combination — the Icepi Zero has no ROM big enough for the
-  firmware that would drive HDSK — so it is untested rather than broken.
+- **A real RomWBW image through the loader.** `sim/tb_romload.sv` stages 2 KB
+  of boot monitor, not 512 KB of RomWBW. The difference is a block count and
+  a parameter, but nothing has driven the real image through that path.

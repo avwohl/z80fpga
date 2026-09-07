@@ -52,6 +52,15 @@ ROM mirrors across the whole of ROM bank 0 that way.
 (`rtl/mem/spram_ice40.sv`), which is 128 KB, exactly four banks. That part's
 block RAM cannot hold even one bank, so on a UP5K it is SPRAM or nothing.
 
+`SDRAM_ROM` goes further and puts the *ROM* in the SDRAM too, which changes
+where a ROM image can come from: not out of the bitstream, because there is no
+block RAM holding it any more, but off the microSD card at power-up
+(`rtl/soc/rom_loader.sv`, and `boards/icepi_zero/romwbw/`). The physical
+address then grows a bit that says which of the two spaces it is -- ROM at the
+bottom of the megabyte, RAM at the top -- and the core is held in reset until
+the image is there. It is the only way the full 512 KB + 512 KB map fits on a
+part whose block RAM tops out at 126 KB.
+
 `USE_DDR2` and `USE_SDRAM` put the RAM off-chip, in the Nexys A7's DDR2
 through the MIG (`rtl/mem/ddr2_ram.sv`) or in the Icepi Zero's SDR SDRAM
 (`rtl/mem/sdram_ram.sv`). Neither can answer in a T-state and neither
@@ -68,6 +77,7 @@ one is behind them.
 | Arty A7-100T | 2 banks, 64 KB | 8 banks, 256 KB | `0x87` |
 | Icepi Zero | 1 bank, 32 KB | 2 banks, 64 KB | `0x81` |
 | Icepi Zero, `sdram/` | 1 bank, 32 KB | 16 banks, 512 KB SDRAM | `0x8F` |
+| Icepi Zero, `romwbw/` | 16 banks, 512 KB SDRAM, off the card | 16 banks, 512 KB SDRAM | `0x8F` |
 | C0-microSD | 8 KB, mirrored | 4 banks, 128 KB SPRAM | `0x83` |
 
 A build with `RAM_BANKS = 16` also fits the Arty's block RAM, at around 95% of
@@ -78,8 +88,9 @@ about it depends on the part. On an XC7A100T the ROM half fits and the RAM
 half goes to DDR2, which is the Nexys `romwbw/` build. On the ECP5 the ROM
 half does not fit either — 126 KB is the ceiling for a byte-wide ROM on an
 LFE5U-25F, and 112 KB for a byte-wide RAM — so the Icepi's `sdram/` build has the RAM and only a 32 KB ROM
-bank, which is enough for the monitor and not for RomWBW. See
-[roadmap.md](roadmap.md).
+bank still in the bitstream, which is enough for the monitor and not for
+RomWBW; and its `romwbw/` build puts both halves in the chip and fetches the
+ROM off the microSD card before letting the core go.
 
 ## What is not implemented
 
