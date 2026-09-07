@@ -156,6 +156,68 @@ card.
   every strobe that reaches the port, which is how "a byte of the block is
   going missing" was ruled out: they rose by exactly seven per command.
 
+## Preparing the card
+
+A card straight out of a camera or a card reader will not work past `C:`, and
+`C:` only by accident. RomWBW keeps its CP/M slices in an area reserved in the
+MBR, and a factory card has a FAT32 partition sitting exactly where that area
+has to go. The symptom is that `C:` can be made to work with `CLRDIR` while
+`D:` onwards answer `Invalid drive specified`, and selecting one of them wedges
+CP/M (see below).
+
+Prepare each HBIOS unit once, from the RAM disk, with RomWBW's own `FDISK80`.
+Unit 2 is `HDSK0:` (drives `C:`-`F:`) and unit 3 is `HDSK1:` (`G:`-`J:`):
+
+```
+B>FDISK80
+HBIOS unit number [0..3]: 2
+>>D      Partition number to delete: 1      (repeat for every non-empty entry)
+>>P                                         check they are all empty
+>>R      Reserve how many CP/M slices: 8
+>>P                                         "Reserved 8 x 8Mb CP/M slices"
+>>W      Do you really want to write to disk? [N/y]: y
+```
+
+Two things about driving it, both of which cost a run to find out. The unit
+number is taken as a single keypress, so the RETURN after it is read as the
+first command and prints the table -- send it deliberately and wait, or the
+command after it is swallowed. And `D 1` on one line does not work; `D` prompts
+for the number separately.
+
+Then give each drive a directory, from a drive that is not itself being
+cleared. `CLRDIR` takes the drive as an argument, which is what breaks the
+circularity of a drive that cannot be selected until it has a directory:
+
+```
+B>CLRDIR C:      ... and D:, E:, F:, G:, H:, I:, J:
+```
+
+After that all ten drives select, and `STAT` reports each of the eight card
+slices as `R/W, Space: 8176k`.
+
+## Selecting a drive that is not prepared
+
+CP/M 2.2 has no way out of this, and it is worth knowing that it is CP/M's
+behaviour rather than a fault in the controller:
+
+```
+B>D:
+Bdos Err On D: Select
+Bdos Err On D: Select      ... for ever
+```
+
+BDOS prints the error and warm boots, the CCP's default drive is still `D:`, so
+it selects it again and errors again. Ctrl-C, RETURN and typing another drive
+letter all just produce another error, because each of them reaches the CCP
+only after the select has already failed. **Press the red CPU RESET button** --
+`CPU_RESETN`, pin C12 -- which resets the MIG and the SoC and reboots RomWBW.
+
+The controller is not involved in this. Sector reads of an unprepared slice
+succeed and return promptly: reading LBA `004000`, `004001`, `004002` and
+`004010` directly through port `$FD` gives status `00` for all four, and the
+data that comes back is the FAT boot sector that was there -- `EB 58 90` then
+`mkfs.fat`. HBIOS refuses the drive before the controller is ever asked.
+
 Each unit is `UNIT_STRIDE` blocks apart on the card, 1 GiB, matching what the
 driver claims. Unit 0 starts at card block 0, so **writing to `C:` overwrites
 the start of the card**.
