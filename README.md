@@ -125,8 +125,16 @@ across the cycle the way the real part drives an external bus.
 - **[Signaloid C0-microSD](boards/c0_microsd/)** — fits, at 94% of the
   UP5K's logic. 128 KB of RAM in the four SPRAM blocks, an 8 KB boot ROM,
   console on the SD breakout pins.
+- **[Tang Nano 20K](boards/tang_nano_20k/)** — a plan rather than a build. A
+  Gowin GW2AR-18 with 8 MB of SDR SDRAM *inside the package*, which is the only
+  small board here whose RomWBW-sized memory needs no board wiring at all, and
+  the open Gowin flow is already in the OSS CAD Suite.
 - **[Qomu](boards/qomu/)** — does not fit, and cannot. The note explains why
   and what the board is good for instead.
+
+[docs/porting.md](docs/porting.md) is what a new board costs: what it inherits
+from `rtl/`, what is irreducibly per board, and the one file that is less
+portable than it looks.
 
 What has and has not run, kept honest: the Nexys A7-100T boots RomWBW's HBIOS
 and CP/M 2.2 on real silicon, off a bitstream in the board's QSPI flash. The

@@ -48,8 +48,45 @@ worth roughly 1200 LUTs.
 Pin assignments follow
 `litex-boards/litex_boards/platforms/signaloid_c0_microsd.py`.
 
+## RomWBW will not run here, and that is arithmetic
+
+**512 KB of RAM cannot be found on this module in any configuration**, so the
+question does not need re-opening. The iCE40UP5K has four SPRAM blocks of
+256 Kbit — 128 KB in total, which is the four RAM banks above and nothing left
+over — and 120 Kbit of block RAM, which cannot hold even one 32 KB bank. There
+is no external RAM on the C0-microSD, and in a microSD form factor there are
+six usable pads, none of them a memory bus. Lattice is explicit that SPRAM has
+no configuration preload (FPGA-DS-02008-2.0 §3.1.6), so it cannot be a ROM
+either.
+
+The ROM half is less absolute and worth stating precisely, because the obvious
+objection is the wrong one: the 16 MiB AT25QL128A on the module is large
+enough, the ROM is read-only (`sync_ram` gates every write on `READ_ONLY`), and
+the SoC already has a `wait_n` path that could stall the core for a slow fetch.
+So a 512 KB ROM executing in place out of flash is *architecturally* available.
+It is the RAM that is impossible, not the ROM.
+
+The tier that does fit is the one that is here: the core, a UART and a monitor.
+See [../../docs/porting.md](../../docs/porting.md) for what the two tiers mean.
+
+## The clock comes from the host, which is worth knowing
+
+`top.sv` takes `clk12` on pin B3, and B3 is **SD_CLK**. There is no oscillator
+on this module — the schematic's whole BOM is the FPGA, a flash, two
+regulators, two LEDs, a diode and passives — so this design runs only while
+something is clocking the SD bus, at whatever rate that something chooses.
+
+The part has its own oscillator. `SB_HFOSC` gives 48 MHz with a `CLKHF_DIV`
+divider down to 6 MHz, which is what the timing report above is already
+measured against, and it would make the board self-clocked. That is the first
+change to make if one of these ever reaches a bench.
+
 ## Untested on hardware
 
 No C0-microSD was available. This is verified to a placed, routed,
 timing-closed bitstream and no further; the SoC itself is verified in
-simulation (`make test` at the repository root).
+simulation (`make test` at the repository root). At 96% of the logic cells the
+two reductions in [../../docs/roadmap.md](../../docs/roadmap.md) are worth
+about 1200 LUTs between them, which would take it to roughly 74% — not urgent,
+but the margin is thin enough that a future core change could simply fail to
+place.

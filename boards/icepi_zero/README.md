@@ -18,6 +18,42 @@ The part number is from
 `hardware/v1.0/icepi-zero.kicad_sch`, and every pin in the `.lpf` is from that
 repository's `gateware/icepi-zero.lpf`.
 
+## Which revision these files are for, which is not v1.1
+
+`gateware/icepi-zero.lpf` upstream is a **symlink**, and it has been retargeted
+twice. When these files were written it resolved to `v1.3/icepi-zero-v1_3.lpf`;
+it now points at v1.4. So the pins here are v1.3/v1.4 pins, and the sentence
+above, while true as written, names a path that does not say so.
+
+**On a v1.0 or v1.1 board this design will configure, assert DONE, and do
+nothing.** The 50 MHz oscillator is on **M2** there and on **M1** from v1.3
+onward — upstream's `hardware/changes.md` records the swap as "Swapped pins M1
+and M2 / PCLKC is not a clock pin", and on a v1.1 board M1 is a Pi-header GPIO
+that is not connected to anything. `LOCATE COMP "clk" SITE "M1";` therefore
+binds the clock to a floating pin. It is the same failure as loading an Arty
+bitstream on a Nexys, and it looks the same from outside.
+
+Two other things differ and one of them will waste a debugging session:
+
+- `led[0]`, `led[1]`, `led[2]` are E13/E12/… here and **E14/E15/D14** on v1.1.
+  E13 and E12 are unconnected balls on a v1.1, so a perfectly working RomWBW
+  build would show exactly the LED signature the romwbw README tells you means
+  "stopped at SDRAM init".
+- `sd_clk` and `sd_mosi` are swapped: **N16** and **P15** on v1.1.
+
+The SDRAM bus is identical across every revision — all 39 sites, checked ball
+by ball — and so are the part number, the console pins and the JTAG wiring.
+
+**Telling the boards apart:** one push button is v1.0, two is v1.1 or later.
+v1.0 and v1.1 are *not* the same pinout either — v1.0 puts `led[0]` on F16 and
+has no second button — so a v1.1 file is a v1.1 file, not a "v1.0/v1.1" one.
+
+Nothing here is hard to fix: four `LOCATE` lines in `icepi_zero.lpf` and
+`sdram/icepi_zero_sdram.lpf`, six in `romwbw/icepi_zero_romwbw.lpf`, and a
+`REV ?=` variable in the three Makefiles so the question is asked once per
+build. It has not been done because no Icepi Zero of any revision has yet run
+this design on hardware.
+
 ## Build
 
 ```
