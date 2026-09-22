@@ -43,6 +43,28 @@ blocks — a stock RomWBW `.rom` is 512 KB, which is 1024 of them.
 `ROM_LBA` and `ROM_BLOCKS` in `top_romwbw.sv` are both parameters if a
 different layout suits you better.
 
+### Writing a prepared image instead of running FDISK80
+
+The slices can be written on from the host instead of made inside the machine,
+if the image carries the MBR `FDISK80` would have written. `hd1k_combo` from
+[romwbw_disks](https://github.com/avwohl/romwbw_disks) does: its first
+partition entry is type `0x2E` at LBA 2048, and that is the entry HBIOS looks
+for. A bare single-slice image has no MBR at all and will not do.
+
+Each unit's own block 0 is where it goes, so the seek is the unit base and
+nothing else — `UNIT_STRIDE` in `rtl/soc/hdsk.sv` is `0x200000` blocks, so
+unit 0 starts at 0 and unit 1 at 2097152:
+
+```
+dd if=hd1k_combo-v0-3.6.0.img of=/dev/sdX bs=512 seek=0       conv=fsync
+dd if=hd1k_combo-v0-3.6.0.img of=/dev/sdX bs=512 seek=2097152 conv=fsync
+```
+
+**This has not been tried on hardware.** Every prepared card here was made the
+other way, with `FDISK80` and `CLRDIR` in the booted machine, and whether HBIOS
+reads an MBR laid down by `dd` exactly as it reads one it wrote itself is
+untested. The `FDISK80` sequence is the proven one.
+
 ## Build
 
 ```

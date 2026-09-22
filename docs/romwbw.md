@@ -82,6 +82,52 @@ That converts the first 64 KB with `tools/mkromhex.py` and runs
 `sim/tb_romwbw.sv`. Allow a few minutes: the prompt is about 8.6 M clocks in,
 and the run stops as soon as it sees it.
 
+## Where the image comes from
+
+`SBC_simh_std.rom` is [RomWBW](https://github.com/wwarthen/RomWBW)'s own build,
+shipped inside `RomWBW-v<ver>-Package.zip` as `Binary/SBC_simh_std.rom`.
+`tools/romwbw_fetch.py` saves you finding that zip:
+
+```
+make romwbw ROMWBW_VERSION=3.5.1
+```
+
+Name the release. Left to itself the catalog picks its own default, which is
+3.6.0 today, and the section below records that 3.6.0 does not reach the boot
+prompt in this 64 KB simulation. 3.5.1 is the one this board is proved on.
+
+It walks the v0 catalog in
+[avwohl/romwbw_disks](https://github.com/avwohl/romwbw_disks) — one stable
+index URL, then one catalog per RomWBW release — and reads that catalog's
+top-level `upstream` object: the release `tag`, the `package_url` of wwarthen's
+zip, and the `package_sha256` the download is checked against before it is
+opened. The bytes are upstream's. The catalog only says which zip, and what it
+must hash to. `ROMWBW_INDEX_URL` aims the whole walk at a fork's index, which
+is how a forked catalog is tried without editing anything here; its downloads
+are kept in their own namespace, hashed from the URL the same way the four
+emulator clients hash it.
+
+**It never reads the catalog's `roms[]`.** Those entries — `emu_avw` and
+`emu_rcz80` — are emulator ROMs. Banks 1-15 are a stock RomWBW image, but
+bank 0 is an HBIOS proxy. Its services are each an `OUT` to `0xEF` followed by
+`RET`, with the answer expected back in the registers from a host that trapped
+the port — it drives no console, no disk and no timer, only the ports an
+emulator watches. This board is not that emulator. Nothing here decodes `0xEF`,
+so the `OUT` is simply not latched by anything and the `RET` returns with the
+registers untouched. (The proxy does write `0x78` and `0x7C`, which this SoC
+really does decode — `z80_mmu.sv` banks on them — so it is not that no
+instruction in it has an effect. It is that no HBIOS call does.) It is not
+that such a ROM talks to the wrong console; it is that it never reaches a
+console at all. That is a deeper silence than the mismatch the next section
+describes, and it is why the fetcher takes the stock image out of the package
+rather than the catalog's own ROMs.
+
+The stock ROM in the `upstream` zip is the one that runs on hardware, and it is
+the one that has. `RomWBW-v3.5.1-Package.zip`, sha256 `e696ff2f...`, member
+`Binary/SBC_simh_std.rom`, through `tools/mkromhex.py --size 524288`, is
+`boards/nexys_a7_100t/romwbw/romwbw512k.hex` byte for byte — the image inside
+the only bitstream that has ever run on real silicon.
+
 ## The console has to be SSER
 
 This is the part that is easy to get wrong, because the failure is silence
@@ -125,6 +171,17 @@ What is missing is the rest of the ROM. The simulation loads only the first
 in block RAM beside 512 KB of RAM. Banks 2 to 15 read as 0xFF, so the 384 KB
 ROM disk the banner advertises is not really there and the loader's disk
 commands will not find it. Reaching the prompt does not depend on it.
+
+That last sentence is true of 3.5.1, which is what everything above was
+measured on. It is not true of 3.6.0. `make romwbw ROMWBW_VERSION=3.6.0` gets
+through the same sign-on, the same `ROM VERIFY: 00 00 00 00 PASS` and the same
+device init, and then stops with no prompt. The device inventory moved: in
+3.5.1 the table's text is at ROM offset 0x001df4, in bank 0, and in 3.6.0 it
+is at 0x01aa14, in bank 3 — which the 64 KB window does not load, so the call
+lands in 0xFF and never comes back to the loader. The loader itself is still
+in bank 1 in both. That is a property of the image and of the window, not of
+how the image was fetched, and on hardware all 16 banks are there. Nobody has
+run 3.6.0 on hardware, so this says nothing about whether it boots there.
 
 On hardware both halves fit, but not in the same place. 512 KB of ROM is 128
 of the part's 135 RAMB36 tiles, which leaves nothing for the RAM, so the RAM

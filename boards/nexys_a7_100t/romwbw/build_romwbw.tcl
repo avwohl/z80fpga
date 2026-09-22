@@ -17,6 +17,22 @@ if {![file exists $here/romwbw512k.hex]} {
     error "romwbw512k.hex is missing - build it with tools/mkromhex.py, see the header of this file"
 }
 
+# Which ROM this bitstream will carry, if tools/mkromhex.py left its note
+# beside the hex.  An echo into the build log, never a gate: a hand-built hex
+# has no note and still builds.
+set note $here/romwbw512k.hex.provenance.json
+if {[file exists $note]} {
+    set fh [open $note r]
+    set j [read $fh]
+    close $fh
+    if {[regexp {"romwbw_version"\s*:\s*"([^"]*)"} $j -> ver]} {
+        puts "romwbw512k.hex is RomWBW $ver"
+    }
+    if {[regexp {"source_sha256"\s*:\s*"([^"]*)"} $j -> sha]} {
+        puts "romwbw512k.hex is from an image hashing $sha"
+    }
+}
+
 file mkdir $out
 # $readmemh resolves relative to the run directory, so put the images there.
 foreach f [list $root/rtl/core/z80_ucode.mem $root/rtl/core/z80_dispatch.mem] {

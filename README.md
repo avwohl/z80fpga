@@ -150,9 +150,13 @@ install. The Icepi Zero's pin assignments come from
 [cheyao/icepi-zero](https://github.com/cheyao/icepi-zero)'s own constraint
 file, under the zlib licence, altered. Both are recorded in
 [THIRD-PARTY.txt](THIRD-PARTY.txt). Nothing else here is anyone else's: the
-RomWBW ROM and disk images the board runs are deliberately *not* committed,
-and are fetched from the [RomWBW](https://github.com/wwarthen/RomWBW) release
-package instead.
+RomWBW ROM the board runs is deliberately *not* committed. Point `ROMWBW_ROM`
+at an image you already have, or let `tools/romwbw_fetch.py` take
+`Binary/SBC_simh_std.rom` out of the
+[RomWBW](https://github.com/wwarthen/RomWBW) release package for you. No disk
+image is needed: the card's CP/M slices are made in place, by `FDISK80` and
+`CLRDIR` inside the booted machine. A prepared image may be written on instead,
+which `boards/icepi_zero/romwbw/README.md` describes and nobody has tried.
 
 ## Related Projects
 
@@ -166,6 +170,7 @@ package instead.
 - [mbasicc](https://github.com/avwohl/mbasicc) - C++17 interpreter for MBASIC 5.21, the Microsoft BASIC-80 for CP/M. It runs on Linux and macOS.
 - [mbasicc_web](https://github.com/avwohl/mbasicc_web) - Web browser interpreter for MBASIC 5.21, the Microsoft BASIC-80 for CP/M. Emscripten compiles the mbasicc interpreter to WebAssembly.
 - [mpm2](https://github.com/avwohl/mpm2) - Z80 emulator for MP/M II, the multi-user CP/M operating system. Users connect over SSH, and SFTP clients transfer files.
+- [romwbw_disks](https://github.com/avwohl/romwbw_disks) - ROM images and CP/M disk images for the RomWBW emulators, served from a two-level JSON catalog. One stable index URL reaches every published RomWBW release, and every asset carries the SHA-256 a client checks it against.
 - [romwbw_emu](https://github.com/avwohl/romwbw_emu) - Hardware-level Z80/CP/M emulator for Linux and macOS. It emulates the RomWBW HBIOS interface and switches banks in 512 KB of ROM and 512 KB of RAM.
 - [scelbal](https://github.com/avwohl/scelbal) - Floating-point BASIC interpreter for the 8080 processor and CP/M. A translator converts the original 8008 source code to 8080 source code.
 - [uada80](https://github.com/avwohl/uada80) - Ada compiler for the Z80 processor and CP/M 2.2. It compiles a subset of Ada 2012 to CP/M .COM files.

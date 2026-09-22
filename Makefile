@@ -78,11 +78,41 @@ sim/tb_romload.vvp: sim/tb_romload.sv $(ROMLOAD) $(SOC) $(GEN) sim/boot2k.hex
 #
 #   make romwbw ROMWBW_ROM=path/to/SBC_simh_std.rom
 #
+# Or name a RomWBW release instead of a path, and tools/romwbw_fetch.py takes
+# the image out of the romwbw_disks catalog, checking it against the SHA-256
+# published there.  ROMWBW_INDEX_URL aims that at a fork's catalog instead:
+#
+#   make romwbw ROMWBW_VERSION=3.5.1
+#
 # Takes a few minutes: the loader prompt is about 8.6 M clocks in.
 ROMWBW_ROM ?=
+ROMWBW_VERSION ?=
+ROMWBW_INDEX_URL ?=
 
-sim/romwbw64k.hex:
-	@test -n "$(ROMWBW_ROM)" || 	  (echo "set ROMWBW_ROM=path/to/a/RomWBW .rom image" && false)
+# Naming a release, or a catalog, is the other way of saying ROMWBW_ROM.  The
+# fetched image gets a name nobody would type, so that pointing ROMWBW_ROM at
+# a file of your own can never put this rule in the graph and overwrite it.
+ifneq ($(ROMWBW_VERSION)$(ROMWBW_INDEX_URL),)
+ifneq ($(ROMWBW_ROM),)
+$(error set ROMWBW_ROM for an image you have, or ROMWBW_VERSION to fetch one, not both)
+endif
+ROMWBW_ROM := sim/romwbw-fetched.rom
+
+# FORCE, because otherwise this was built once and changing ROMWBW_VERSION
+# would quietly reuse the first release.  romwbw_fetch.py leaves the file
+# alone when it is already the release asked for, and needs no network to
+# decide that, so nothing downstream rebuilds unless the image really moved.
+sim/romwbw-fetched.rom: FORCE
+	$(PYTHON) tools/romwbw_fetch.py -o $@ $(if $(ROMWBW_VERSION),--romwbw $(ROMWBW_VERSION)) $(if $(ROMWBW_INDEX_URL),--index-url $(ROMWBW_INDEX_URL))
+endif
+
+# FORCE here too.  A prerequisite alone only compares timestamps, so an image
+# OLDER than the hex was silently ignored and the previous ROM re-simulated --
+# the same trap as having no prerequisite at all, just harder to see.
+# tools/mkromhex.py decides by the image's hash and leaves the hex alone when
+# it already came from it, so asking every time costs nothing.
+sim/romwbw64k.hex: $(ROMWBW_ROM) FORCE
+	@test -n "$(ROMWBW_ROM)" || 	  (echo "set ROMWBW_ROM=path/to/a/RomWBW .rom image, or ROMWBW_VERSION=3.5.1 to fetch one" && false)
 	$(PYTHON) tools/mkromhex.py $(ROMWBW_ROM) $@ --size 65536
 
 sim/tb_romwbw.vvp: sim/tb_romwbw.sv $(SOC) $(GEN)
@@ -131,4 +161,6 @@ synth: $(GEN)
 clean:
 	rm -f sim/*.vvp sim/vec.txt sim/res.txt
 
-.PHONY: all gen boot sim test test-full lint synth clean
+FORCE:
+
+.PHONY: all gen boot sim romwbw test test-full lint synth clean FORCE

@@ -16,7 +16,12 @@ HBIOS, the device inventory and `Boot [H=Help]:`. `L` lists the ROM
 applications; `C` boots CP/M 2.2.
 
 The ROM image is not in the repository — build it first with the command
-above, from your own RomWBW checkout or emulator ROM set.
+above, from a stock RomWBW `SBC_simh_std.rom`: one you already have, or one
+`tools/romwbw_fetch.py` takes out of the release package. An *emulator* ROM
+will not do. Its bank 0 is an HBIOS proxy: every service is an `OUT` to a port
+only an emulator answers, so nothing here ever drives the console and the
+board prints nothing. [docs/romwbw.md](../../../docs/romwbw.md) has the
+ports.
 
 Timing closes at WNS +1.216 ns, 0 of 14909 endpoints failing, using 7243 LUTs
 (11%) and 128 of the 135 block RAM tiles.

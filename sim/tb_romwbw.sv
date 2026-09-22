@@ -4,8 +4,11 @@
 // banked memory running real HBIOS rather than sw/boot.z80, far enough to
 // reach the loader's boot prompt.
 //
-// The ROM image is not in this repository.  Build one from your own RomWBW
-// checkout or emulator ROM set and convert the first 64 KB:
+// The ROM image is not in this repository, and it has to be a *stock* one:
+// an emulator ROM's bank 0 is an HBIOS proxy whose services are all an OUT to
+// a port only an emulator answers, so nothing drives the console and it
+// prints nothing here.  Use an image you have, or tools/romwbw_fetch.py, and
+// convert the first 64 KB:
 //
 //   python tools/mkromhex.py .../SBC_simh_std.rom sim/romwbw64k.hex --size 65536
 //

@@ -3,7 +3,13 @@ sim/*.vvp
 sim/romwbw64k.hex
 sim/hdsk_test.hex
 sim/boot2k.hex
+sim/romwbw-fetched.rom
 boards/*/*/romwbw*.hex
+# A fetched image, and the notes saying what a hex was made from -- unanchored,
+# because these land wherever the command was run from, not only under sim/.
+SBC_simh_std.rom
+*.provenance.json
+*.partial
 sim/vec.txt
 sim/res.txt
 sim/dbg/
