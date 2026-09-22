@@ -114,15 +114,23 @@ z80fpga.fs: z80fpga_pnr.json
 # One USB-C carries the bitstream and the console, as the Icepi's FT231X
 # does.  Whether the console can stay open across a prog here has not been
 # tried; assume it cannot until it has been.
+# JTAG_FREQ is not decoration.  openFPGALoader defaults to 6 MHz on this
+# cable, and this board's USB link has been intermittent -- enumerating,
+# working, then vanishing with no Windows error logged at all.  A marginal
+# FTDI link often holds at 1 MHz where it fails at 6, and nothing here is
+# big enough for the slower clock to be worth noticing.  Raise it once the
+# link has been proved over a few sessions.
+JTAG_FREQ := 1000000
+
 prog: z80fpga.fs
-	openFPGALoader -b tangnano20k $<
+	openFPGALoader -b tangnano20k --freq $(JTAG_FREQ) $<
 
 # -f is --write-flash.  Without it openFPGALoader writes SRAM, which is the
 # default and is gone at power down.  Plain -f is what this part wants: the
 # GW2AR has no internal flash, so there is nothing for --external-flash to
 # choose between.
 flash: z80fpga.fs
-	openFPGALoader -b tangnano20k -f $<
+	openFPGALoader -b tangnano20k --freq $(JTAG_FREQ) -f $<
 
 # The device utilisation table, which is the one after packing.  The
 # MUX2_LUT* rows are the slice muxes that pair LUT4s up, not more LUT4s --

@@ -1,13 +1,27 @@
-# Sipeed Tang Nano 20K — a plan, not a build
+# Sipeed Tang Nano 20K
 
-**Nothing here builds yet.** This is the case for doing it and the order to do
-it in, written down so the work can start from a settled position rather than
-from research. The Qomu note next door is the same shape for the opposite
-answer.
+Tier (a) builds, and the bitstream has been loaded onto a real board. It does
+not print yet, and the section at the bottom says exactly how far it got and
+what is still unknown. The rest of this file is the case for the board and the
+order to take it in, which is unchanged.
 
 The short version: this is the best tier (b) target of any small board in this
 tree, because it is the only one whose RomWBW-sized memory is already inside
 the FPGA package, and because the whole toolchain is already installed.
+
+## Talking to it on Windows
+
+openFPGALoader needs libusb access to the FT2232's **interface 0**, and
+Windows binds its own VCP driver to both interfaces, which shows up as
+`usb_open() failed (-4)` -- the device is found and cannot be claimed. Zadig
+(Options > List All Devices) fixes it: pick the entry for interface 0 and
+replace `FTDIBUS` with `WinUSB`.
+
+Sipeed sets the string descriptor to "USB Debugger" for both interfaces, so
+Zadig lists them as **USB debugger 0** and **USB debugger 1** rather than the
+"USB Serial Converter A/B" a stock FTDI part would show. Take **0**. Leave 1
+alone: it is the console. Afterwards the interface-0 COM port disappears and
+the console port remains, and that is the check that you took the right one.
 
 ## The part
 
@@ -104,3 +118,50 @@ that has to be settled before a third backing store is written.
   kind of thing to remember if something behaves impossibly.
 - Every pin above comes from Sipeed's own example constraint files. They should
   be checked against the board in hand before the first build, not after.
+
+## How far the first bring-up got, 2026-09-22
+
+Honest state: **the bitstream is proved, the board runs it, and the console
+has not printed.** What follows is what was established rather than what was
+guessed, because most of a day went into telling those apart.
+
+What is settled:
+
+- The build places, routes and packs: LUT4 7030/20736, **BSRAM 37/46**, 9 IOB,
+  1 BUFG, no PLL, **39.51 MHz against a 27 MHz target**. Zero `Unconstrained
+  IO`, and zero `not found` after nextpnr's `Reading constraints` line.
+- JTAG works and programming works, repeatedly: `idcode 0x81b`, `GW2A(R)-18(C)`,
+  `DONE` every time.
+- **The FPGA runs the design.** The heartbeat LED blinks and the out-of-reset
+  LED lights, which is the 27 MHz clock, the configuration and the reset
+  counter all working on real silicon.
+- **The UART path works.** A throwaway beacon writing `0x55` to the data port
+  from a counter, with no Z80 involved, delivered exactly its designed rate --
+  258 bytes in 25 s and 106 in 8 s, against a predicted 12.9/s. So pin 69, the
+  bridge, the console port and `rtl/soc/uart.sv` at 27 MHz are all good.
+
+What is not settled: why `sw/boot.z80` does not print. The `tx_seen` lamp
+stayed dark, so the core never pulled the UART line low. The identical
+configuration -- `ROM_AW_P 13`, an 8 KB image, `CPU_DIV 2`, `RAM_BANKS 2` --
+prints `z80fpga ready` and `banked memory ok` in simulation, so it is not the
+parameters.
+
+**A theory to not waste time on.** A readback appeared to show every byte with
+bit 7 set coming back as `0x3f`, which looked like block RAM initialisation
+losing the top bit. It is not that. The same corruption appeared with a
+hardcoded constant and no memory in the design at all, and that run delivered
+4133 bytes in 8 seconds from a design that sends 13 -- a receiver mis-locking
+on a bad line, not a byte being altered. `0x55` is precisely the byte that
+decodes plausibly through a broken link, which is what made the earlier clean
+runs look conclusive. `gowin_pack` was separately shown to carry BSRAM
+contents: rewriting the ROM's INIT changed 68,930 bytes of bitstream.
+
+**The USB link is the thing to fix first.** Across one session it enumerated,
+failed with `Device Descriptor Request Failed` (Code 43), recovered on a
+replug, worked, went silent while Windows still reported it healthy, and then
+vanished from USB entirely with no error logged anywhere. Two mitigations are
+in place: Windows USB selective suspend was disabled, and `JTAG_FREQ` in the
+Makefile now clocks JTAG at 1 MHz rather than openFPGALoader's default 6 MHz,
+since a marginal FTDI link often holds at the lower rate. Whether either helps
+is unknown. If it stays unreliable the on-board BL616 bridge is the suspect,
+and reflashing it is a Sipeed exercise rather than anything in this repository.
