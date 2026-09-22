@@ -125,6 +125,37 @@ JTAG_FREQ := 1000000
 prog: z80fpga.fs
 	openFPGALoader -b tangnano20k --freq $(JTAG_FREQ) $<
 
+# `make ledchk` builds and loads the LED-reporting twin of sw/boot.z80's bank
+# check.  This board's console has failed while JTAG stays perfectly healthy,
+# and the LED port at 0xFF is the one output channel that still carries a
+# number off the part: the three rightmost LEDs read as a 3-bit stage, lit =
+# 1.  sw/ledchk.z80 says what each value means, and so does the README.
+#
+# It goes through a generated top rather than a parameter because $readmemh
+# resolves against the Verilog source file, not the working directory, so the
+# ROM's name has to be a literal in a file that sits in this directory.  The
+# generated names all start "ledchk", so nothing here collides with the real
+# build and `make` afterwards does not find a stale boot.hex.
+ledchk.hex: $(ROOT)/sw/ledchk.z80 $(ROOT)/tools/zasm.py
+	python $(ROOT)/tools/zasm.py $< -o $@ --size 8192
+
+ledchk_top.sv: top.sv
+	sed 's|"boot.hex"|"ledchk.hex"|' $< > $@
+
+ledchk.fs: $(filter-out top.sv,$(SRC)) ledchk_top.sv ledchk.hex \
+           z80_ucode.mem z80_dispatch.mem
+	yosys -p "read_verilog -sv -I $(ROOT)/rtl/core \
+	          $(filter-out top.sv,$(SRC)) ledchk_top.sv; \
+	          synth_gowin -family $(SYNFAM) -top $(TOP) -json ledchk.json" \
+	      -l ledchk_yosys.log
+	nextpnr-himbaechel --device $(DEVICE) --vopt family=$(FAMILY) \
+	                   --vopt cst=$(CST) --json ledchk.json \
+	                   --write ledchk_pnr.json --freq $(FREQ) -l ledchk_pnr.log
+	gowin_pack -d $(FAMILY) -o $@ ledchk_pnr.json
+
+ledchk: ledchk.fs
+	openFPGALoader -b tangnano20k --freq $(JTAG_FREQ) $<
+
 # -f is --write-flash.  Without it openFPGALoader writes SRAM, which is the
 # default and is gone at power down.  Plain -f is what this part wants: the
 # GW2AR has no internal flash, so there is nothing for --external-flash to
@@ -147,6 +178,7 @@ timing: z80fpga_pnr.json
 
 clean:
 	rm -f z80fpga.json z80fpga_pnr.json z80fpga.fs *.log $(MEMS)
+	rm -f ledchk.json ledchk_pnr.json ledchk.fs ledchk.hex ledchk_top.sv
 
 # nextpnr writes the post-route netlist even when timing fails, and then exits
 # 1.  Without this, the next make would find a newer _pnr.json than .json,
@@ -154,4 +186,4 @@ clean:
 # without a word.
 .DELETE_ON_ERROR:
 
-.PHONY: all prog flash stat timing clean
+.PHONY: all prog flash ledchk stat timing clean

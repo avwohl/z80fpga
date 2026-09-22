@@ -1,0 +1,85 @@
+; sw/boot.z80's bank check, reporting its progress on the LED port instead of
+; the console.  The Tang Nano's serial bridge is dead, the LEDs are not.
+;
+; The three rightmost LEDs read as a 3-bit number, lit = 1:
+;   1 alive, running from ROM
+;   2 reached 8000h in the common bank
+;   3 RAM bank 80h selected and written
+;   4 RAM bank 81h selected and written
+;   5 every bank read back
+;   6 BANK CHECK PASSED
+;   7 BANK CHECK FAILED - a bank read back wrong
+; Anything flickering or dark means it died before it got that far.
+
+LED      equ 0FFh
+BANK_RAM equ 078h
+BANK_ROM equ 07Ch
+RAM_BASE equ 080h
+RAM_N    equ 2
+
+         org 0000h
+
+start:   di
+         ld sp,0FFF0h
+         ld a,1
+         out (LED),a
+
+         ld hl,bt_start
+         ld de,08000h
+         ld bc,bt_end-bt_start
+         ldir
+         call 08000h
+hang0:   jr hang0
+
+; --------------------------------------------- runs at 8000h, common bank
+bt_start:
+         ld a,2
+         out (LED),a
+
+         ld c,RAM_BASE
+         ld b,RAM_N
+btw:     ld a,c
+         out (BANK_RAM),a
+         ld (4000h),a
+         xor 0FFh
+         ld (4001h),a
+         ld a,c
+         sub 07Dh               ; 80h -> 3, 81h -> 4
+         out (LED),a
+         inc c
+         djnz btw
+
+         ld c,RAM_BASE
+         ld b,RAM_N
+         ld d,0
+btr:     ld a,c
+         out (BANK_RAM),a
+         ld a,(4000h)
+         cp c
+         jr z,btr1
+         inc d
+btr1:    ld a,(4001h)
+         ld e,a
+         ld a,c
+         xor 0FFh
+         cp e
+         jr z,btr2
+         inc d
+btr2:    inc c
+         djnz btr
+
+         ld a,5
+         out (LED),a
+
+         xor a                  ; ROM back into the low window
+         out (BANK_ROM),a
+         ld a,d
+         or a
+         jr nz,fail
+         ld a,6
+         out (LED),a
+         jr hang
+fail:    ld a,7
+         out (LED),a
+hang:    jr hang
+bt_end:

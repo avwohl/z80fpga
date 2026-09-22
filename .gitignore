@@ -25,6 +25,9 @@ boards/*/*.config
 boards/*/*.log
 boards/*/*.mem
 boards/*/boot.hex
+# `make ledchk` generates these from sw/ledchk.z80 and top.sv
+boards/*/ledchk.hex
+boards/*/ledchk_top.sv
 boards/*/*/*.json
 boards/*/*/*.bit
 boards/*/*/*.config

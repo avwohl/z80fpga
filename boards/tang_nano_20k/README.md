@@ -178,6 +178,47 @@ touches only the high window** -- `08000h` and `0FFF0h` are both the common
 bank -- while the checker writes to `4000h`, in the low banked window. That is
 untested ground, and it is where the monitor dies.
 
+Reading the netlist sharpens that from "the low window" to something narrower
+and physical. The 64 KB of RAM is **32 BSRAM blocks configured one bit wide**,
+in four groups of eight, and the netlist bears out the obvious structure: the
+four groups have four distinct `WRE` nets, so depth is decoded by gating the
+writes, and no two blocks drive the same output bit. Which group an access
+lands in is `phys[15:14]`, so:
+
+- the common bank, `phys[15] = 1`, is **groups 2 and 3**;
+- a RAM bank in the low window, `phys[15] = 0`, is **groups 0 and 1**.
+
+The stack at `0FFF0h`, the `LDIR` target at `08000h` and the execute-from-RAM
+test are all `phys[15] = 1`. **Nothing that has ever worked on this board has
+addressed groups 0 and 1**, and `ld (4000h),a` with bank `80h` selected is the
+first access in the whole bring-up that does. That is the shape of the thing
+to test, and `make ledchk` is how to read the answer.
+
+Simulating the netlist itself is the obvious next instrument, and it is
+half-built. `sim/gowin_sp.v` is the piece the OSS CAD Suite does not ship: its
+`SP` primitive is an empty `(* blackbox *)`, so a post-synthesis run reads
+back `zz` and looks like a dead end. With that model, and with the constant-0
+net given a driver -- `write_verilog` names it `u_soc.dma_ack`, wires it to
+every block's `BLKSEL`, and never drives it -- the netlist comes out of reset
+properly and fetches `0F3h`, `di`, from the ROM. It then goes X in the CPU's
+address-ALU carry chain one clock later, for no reason yet found. The header
+of that file says exactly where to resume.
+
+Three more hypotheses were tried and cleared, so nobody spends them again:
+
+- **Block RAM read-during-write semantics.** Simulating the monitor with a
+  write-first `sync_ram` instead of the repo's read-before-write one changes
+  nothing: both print `banked memory ok`. Gowin's `SP` is `WRITE_MODE 2`,
+  read-before-write, which is what the RTL already models.
+- **The memory falling out of block RAM.** `yosys.log` reports exactly one
+  `using FF mapping for memory`, and it is the core's micro-code ROM, which is
+  meant to be logic. The count agrees with the map: **36 `SP` blocks is 32 for
+  the 64 KB of RAM plus 4 for the 8 KB ROM**, with nothing left over. The RAM
+  is whole, it is real block RAM, and it does not alias.
+- **A wait state.** Not worth building: halving the clock already gives more
+  margin than an extra T-state would, and that was measured to change nothing.
+  Whatever this is, it is functional, not a propagation delay.
+
 Two things were tried and did *not* fix it, recorded so nobody spends them
 again:
 
@@ -238,13 +279,45 @@ since a marginal FTDI link often holds at the lower rate. Whether either helps
 is unknown. If it stays unreliable the on-board BL616 bridge is the suspect,
 and reflashing it is a Sipeed exercise rather than anything in this repository.
 
+## Reading it without a console
+
+`make ledchk` builds and loads `sw/ledchk.z80`, which walks exactly the steps
+`sw/boot.z80`'s bank checker walks and reports on the LED port at `0xFF`
+instead of the UART. The **three rightmost LEDs** are that port's low three
+bits, and a lit LED is a 1, so they read as a number with the leftmost of the
+three as the high bit:
+
+- **1** -- alive, running from ROM
+- **2** -- reached `8000h` in the common bank
+- **3** -- RAM bank `80h` selected and written
+- **4** -- RAM bank `81h` selected and written
+- **5** -- every bank read back
+- **6** -- **the bank check passed**
+- **7** -- **the bank check failed**, a bank read back wrong
+
+It halts on the final value, so a steady reading is a result and a flickering
+or dark one means it died before getting that far. **6** clears the banked
+memory and moves the fault elsewhere in the monitor; **7** convicts it; **2**,
+**3** or **4** says it does not survive the bank switch at all.
+
+The three LEDs beside them are unchanged: the leftmost blinks as the
+heartbeat, the next is lit out of reset, and the third is lit once the UART
+has seen its line pulled low -- which on this board it has not, and that is
+the bridge failure itself.
+
+This is worth having rather than a throwaway because the LED port is the only
+channel off this part that still works. It needs one glance and no serial.
+
 ## The state of the board itself
 
-The board's flash currently holds a **diagnostic**, not the monitor: a staged
-test that emits `A` once it is alive, `B` once `LDIR` into the common bank has
+The board's flash holds a **diagnostic**, not the monitor: a staged test that
+emits `A` once it is alive, `B` once `LDIR` into the common bank has
 completed, and then `P` or `E` for whether `4000h` in the low banked window
-reads back what was written. One power-up prints the answer. `make flash` puts
-the real build back.
+reads back what was written. One power-up prints the answer, if the console
+ever comes back. `make flash` puts the real build back.
+
+Its SRAM currently holds the `make ledchk` image, which needs no console at
+all.
 
 **Its serial channel has failed.** JTAG is perfectly healthy -- `idcode 0x81b`,
 `GW2A(R)-18(C)`, and `openFPGALoader` reports `DONE` on every load -- while the
