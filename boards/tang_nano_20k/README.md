@@ -140,11 +140,26 @@ What is settled:
   258 bytes in 25 s and 106 in 8 s, against a predicted 12.9/s. So pin 69, the
   bridge, the console port and `rtl/soc/uart.sv` at 27 MHz are all good.
 
-What is not settled: why `sw/boot.z80` does not print. The `tx_seen` lamp
-stayed dark, so the core never pulled the UART line low. The identical
-configuration -- `ROM_AW_P 13`, an 8 KB image, `CPU_DIV 2`, `RAM_BANKS 2` --
-prints `z80fpga ready` and `banked memory ok` in simulation, so it is not the
-parameters.
+More was established by bisecting with throwaway images, each a few
+instructions long, loaded over JTAG and read on the console:
+
+- **The Z80 executes from the block-RAM ROM, and `OUT` works.** A loop of
+  `ld a,5Ah / out (1),a` delivered clean `Z` bytes.
+- **`IN` works and the UART status is right.** A loop reporting
+  `in a,(0) and 3 or 40h` returned `B` -- 0x02, transmitter-idle set -- 101
+  times in a row, which also exercises `AND`, `OR`, `DJNZ` and `JR`.
+
+So the core, the ROM fetch, both I/O directions and the UART are all good on
+silicon. What is *not* settled is why `sw/boot.z80` itself does not print. The
+one thing the passing tests never touch and the monitor needs immediately is
+**RAM**: it sets a stack at `0FFF0h` and calls. A `CALL`/`RET` test produced
+nothing, which points there, but a direct RAM write/read-back test came back
+contaminated by the link and has to be repeated before it means anything.
+
+The identical configuration -- `ROM_AW_P 13`, an 8 KB image, `CPU_DIV 2`,
+`RAM_BANKS 2` -- prints `z80fpga ready` and `banked memory ok` in simulation,
+so it is not the parameters. **Next step: prove or clear the RAM**, on a link
+that stays up long enough for a result to be trusted.
 
 **A theory to not waste time on.** A readback appeared to show every byte with
 bit 7 set coming back as `0x3f`, which looked like block RAM initialisation
