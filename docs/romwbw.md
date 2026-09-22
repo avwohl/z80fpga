@@ -126,7 +126,8 @@ The stock ROM in the `upstream` zip is the one that runs on hardware, and it is
 the one that has. `RomWBW-v3.5.1-Package.zip`, sha256 `e696ff2f...`, member
 `Binary/SBC_simh_std.rom`, through `tools/mkromhex.py --size 524288`, is
 `boards/nexys_a7_100t/romwbw/romwbw512k.hex` byte for byte — the image inside
-the only bitstream that has ever run on real silicon.
+the bitstream this board was brought up on. A 3.6.0 build has since run on it
+too; 3.5.1 is still what the numbers elsewhere in these docs were measured on.
 
 ## The console has to be SSER
 
@@ -179,9 +180,15 @@ device init, and then stops with no prompt. The device inventory moved: in
 3.5.1 the table's text is at ROM offset 0x001df4, in bank 0, and in 3.6.0 it
 is at 0x01aa14, in bank 3 — which the 64 KB window does not load, so the call
 lands in 0xFF and never comes back to the loader. The loader itself is still
-in bank 1 in both. That is a property of the image and of the window, not of
-how the image was fetched, and on hardware all 16 banks are there. Nobody has
-run 3.6.0 on hardware, so this says nothing about whether it boots there.
+in bank 1 in both.
+
+It is the window, and nothing else. A Nexys bitstream carrying the 3.6.0 image
+was built and run on 2026-09-22: it closes timing at WNS +0.562 ns, and on the
+board it prints the sign-on, the full device inventory and `Boot [H=Help]:`,
+because all 16 banks are there. So `make romwbw ROMWBW_VERSION=3.6.0` failing
+to reach the prompt is a limit of the 64 KB simulation, not of the release and
+not of this SoC. One cosmetic difference is worth knowing when reading a
+capture: 3.6.0 names the console `SSER0:` where 3.5.1 called it `EF0:`.
 
 On hardware both halves fit, but not in the same place. 512 KB of ROM is 128
 of the part's 135 RAMB36 tiles, which leaves nothing for the RAM, so the RAM

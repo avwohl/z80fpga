@@ -2,7 +2,8 @@
 
 The full 512 KB + 512 KB machine. **CP/M 2.2 runs on this**, verified on
 hardware on 2026-09-06 — see [docs/romwbw.md](../../../docs/romwbw.md) for the
-console transcript.
+console transcript. RomWBW 3.5.1 is what it was brought up on; a 3.6.0 build
+has since been run on the same board, and reaches the same prompt.
 
 ```
 python tools/mkromhex.py path/to/SBC_simh_std.rom \

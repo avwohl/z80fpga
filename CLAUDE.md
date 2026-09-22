@@ -80,7 +80,7 @@ the RAMB rows of Vivado's utilisation report rather than assuming.
 
 ## The Nexys RomWBW build is delicate, and must not be perturbed
 
-It is the only bitstream here that has run on hardware, and it sits at **94.81%
+It is the only design here that has run on hardware, and it sits at **94.81%
 of the part's block RAM** -- 128 of 135 RAMB36 tiles, a 512 KB ROM that Vivado
 cascades in pairs. Changing `sd_spi`'s buffer to the muxed form above makes its
 `place_design` fail with **sixty-four `REQP-1962` "cascade ADDR15 pin check"**
@@ -101,6 +101,13 @@ cell under that ROM.
 **Rebuild that board after any change to `rtl/soc/` or `rtl/mem/`**, and check
 for `ERROR: [DRC` in the log -- `place_design` failing is the failure mode,
 and it takes about 25 minutes to find out.
+
+What is *not* fragile is the ROM's contents, and it is worth knowing before
+this section scares you off trying another image. A rebuild carrying RomWBW
+3.6.0 instead of 3.5.1 was made on 2026-09-22: clean `place_design`, no
+`REQP-1962`, WNS +0.562 ns against 3.5.1's +1.216, and it boots to
+`Boot [H=Help]:` on the board. Swapping the image is fine; it is changing the
+netlist around it that this section is about.
 
 ## Board builds
 
