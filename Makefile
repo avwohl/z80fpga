@@ -82,7 +82,7 @@ sim/tb_romload.vvp: sim/tb_romload.sv $(ROMLOAD) $(SOC) $(GEN) sim/boot2k.hex
 # the image out of the romwbw_disks catalog, checking it against the SHA-256
 # published there.  ROMWBW_INDEX_URL aims that at a fork's catalog instead:
 #
-#   make romwbw ROMWBW_VERSION=3.5.1
+#   make romwbw ROMWBW_VERSION=3.6.0
 #
 # Takes a few minutes: the loader prompt is about 8.6 M clocks in.
 ROMWBW_ROM ?=
@@ -111,9 +111,9 @@ endif
 # the same trap as having no prerequisite at all, just harder to see.
 # tools/mkromhex.py decides by the image's hash and leaves the hex alone when
 # it already came from it, so asking every time costs nothing.
-sim/romwbw64k.hex: $(ROMWBW_ROM) FORCE
-	@test -n "$(ROMWBW_ROM)" || 	  (echo "set ROMWBW_ROM=path/to/a/RomWBW .rom image, or ROMWBW_VERSION=3.5.1 to fetch one" && false)
-	$(PYTHON) tools/mkromhex.py $(ROMWBW_ROM) $@ --size 65536
+sim/romwbw512k.hex: $(ROMWBW_ROM) FORCE
+	@test -n "$(ROMWBW_ROM)" || 	  (echo "set ROMWBW_ROM=path/to/a/RomWBW .rom image, or ROMWBW_VERSION=3.6.0 to fetch one" && false)
+	$(PYTHON) tools/mkromhex.py $(ROMWBW_ROM) $@ --size 524288
 
 sim/tb_romwbw.vvp: sim/tb_romwbw.sv $(SOC) $(GEN)
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_romwbw.sv $(SOC)
@@ -130,7 +130,7 @@ sim/hdsk_test.hex: sim/hdsk_test.z80
 sim/tb_hdsk_soc.vvp: sim/tb_hdsk_soc.sv $(SOC) rtl/mem/ddr2_ram.sv rtl/soc/sd_spi.sv rtl/soc/hdsk.sv $(GEN) sim/hdsk_test.hex
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_hdsk_soc.sv $(SOC) rtl/mem/ddr2_ram.sv rtl/soc/sd_spi.sv rtl/soc/hdsk.sv
 
-romwbw: sim/tb_romwbw.vvp sim/romwbw64k.hex
+romwbw: sim/tb_romwbw.vvp sim/romwbw512k.hex
 	$(VVP) sim/tb_romwbw.vvp
 
 test: sim

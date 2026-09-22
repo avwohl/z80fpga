@@ -78,9 +78,9 @@ Point at one you already have:
 make romwbw ROMWBW_ROM=path/to/SBC_simh_std.rom
 ```
 
-That converts the first 64 KB with `tools/mkromhex.py` and runs
-`sim/tb_romwbw.sv`. Allow a few minutes: the prompt is about 8.6 M clocks in,
-and the run stops as soon as it sees it.
+That converts the image with `tools/mkromhex.py` and runs `sim/tb_romwbw.sv`.
+Allow a few minutes: the prompt is about 8.6 M clocks in, and the run stops as
+soon as it sees it.
 
 ## Where the image comes from
 
@@ -89,12 +89,13 @@ shipped inside `RomWBW-v<ver>-Package.zip` as `Binary/SBC_simh_std.rom`.
 `tools/romwbw_fetch.py` saves you finding that zip:
 
 ```
-make romwbw ROMWBW_VERSION=3.5.1
+make romwbw ROMWBW_VERSION=3.6.0
 ```
 
-Name the release. Left to itself the catalog picks its own default, which is
-3.6.0 today, and the section below records that 3.6.0 does not reach the boot
-prompt in this 64 KB simulation. 3.5.1 is the one this board is proved on.
+or leave `ROMWBW_VERSION` off a `romwbw_fetch.py` run entirely and take the
+catalog's own default, which is the current release — 3.6.0 today. Naming a
+release is for pinning a build to one, or for reaching a development snapshot,
+which a bare run will not land on because naming it is the opt-in.
 
 It walks the v0 catalog in
 [avwohl/romwbw_disks](https://github.com/avwohl/romwbw_disks) — one stable
@@ -167,28 +168,32 @@ switching, and `docs/memory_banking.md`'s scheme is what HBIOS expects: the
 image asks for 16 RAM banks and 16 ROM banks (offsets 0x10B and 0x10C), with
 `BIDCOM` 0x8F, and the MMU already answers that when `RAM_BANKS = 16`.
 
-What is missing is the rest of the ROM. The simulation loads only the first
-64 KB — HBIOS in bank 0 and the loader in bank 1 — because that is what fits
-in block RAM beside 512 KB of RAM. Banks 2 to 15 read as 0xFF, so the 384 KB
-ROM disk the banner advertises is not really there and the loader's disk
-commands will not find it. Reaching the prompt does not depend on it.
+The simulation carries the whole 512 KB — the same `ROM_BANKS = 16` and the
+same hex the Nexys build uses — so every bank HBIOS expects is there.
 
-That last sentence is true of 3.5.1, which is what everything above was
-measured on. It is not true of 3.6.0. `make romwbw ROMWBW_VERSION=3.6.0` gets
-through the same sign-on, the same `ROM VERIFY: 00 00 00 00 PASS` and the same
-device init, and then stops with no prompt. The device inventory moved: in
-3.5.1 the table's text is at ROM offset 0x001df4, in bank 0, and in 3.6.0 it
-is at 0x01aa14, in bank 3 — which the 64 KB window does not load, so the call
-lands in 0xFF and never comes back to the loader. The loader itself is still
-in bank 1 in both.
+It used to load only the first 64 KB, HBIOS in bank 0 and the loader in bank 1,
+on the reasoning that this is what fits in block RAM beside 512 KB of RAM. But
+that is a constraint on the *part*, not on a simulation, and keeping it cost
+more than it saved. 3.6.0 moved the device inventory out of bank 0: its text
+sits at ROM offset 0x01aa14, in bank 3, where 3.5.1 had it at 0x001df4. With a
+64 KB window HBIOS called into 0xFF there and never came back to the loader, so
+3.5.1 reached the prompt and 3.6.0 did not, for no better reason than where a
+string had moved. Both reach it now. The run costs about three minutes instead
+of eighty seconds, which is the whole of the price.
 
-It is the window, and nothing else. A Nexys bitstream carrying the 3.6.0 image
-was built and run on 2026-09-22: it closes timing at WNS +0.562 ns, and on the
-board it prints the sign-on, the full device inventory and `Boot [H=Help]:`,
-because all 16 banks are there. So `make romwbw ROMWBW_VERSION=3.6.0` failing
-to reach the prompt is a limit of the 64 KB simulation, not of the release and
-not of this SoC. One cosmetic difference is worth knowing when reading a
-capture: 3.6.0 names the console `SSER0:` where 3.5.1 called it `EF0:`.
+Hardware was never affected, and that is measured rather than assumed: a Nexys
+bitstream carrying the 3.6.0 image was built and run on 2026-09-22, closing
+timing at WNS +0.562 ns and reaching `Boot [H=Help]:` on the board, because all
+16 banks are in block RAM there.
+
+One difference between a simulated capture and a real one is *not* explained
+here. On hardware the inventory reads `MD1: ROM Disk 384KB,LBA`; in simulation
+the same image at the same `ROM_BANKS` reads `--`, and did so at 64 KB too, for
+both releases. It is not the ROM's contents — the bank-3 code printing that
+very table is proof the upper banks read correctly — and nothing here depends
+on it, so it has been left alone. A cosmetic difference that does matter when
+comparing captures: 3.6.0 names the console `SSER0:` where 3.5.1 called it
+`EF0:`.
 
 On hardware both halves fit, but not in the same place. 512 KB of ROM is 128
 of the part's 135 RAMB36 tiles, which leaves nothing for the RAM, so the RAM

@@ -1,6 +1,6 @@
 # simulation and build products
 sim/*.vvp
-sim/romwbw64k.hex
+sim/romwbw*.hex
 sim/hdsk_test.hex
 sim/boot2k.hex
 sim/romwbw-fetched.rom

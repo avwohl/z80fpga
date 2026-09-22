@@ -5,16 +5,17 @@ The images are not in this repository -- they are large, they are not ours,
 and they move independently.  ROMWBW_ROM points at one you already have; this
 fetches one you do not:
 
-    python tools/romwbw_fetch.py --romwbw 3.5.1 -o sim/SBC_simh_std.rom
+    python tools/romwbw_fetch.py -o sim/SBC_simh_std.rom
     make romwbw ROMWBW_ROM=sim/SBC_simh_std.rom
 
 or the same thing in one step, which is what the Makefile does with it:
 
-    make romwbw ROMWBW_VERSION=3.5.1
+    make romwbw ROMWBW_VERSION=3.6.0
 
-Name the release.  Without --romwbw the catalog's own default is taken, which
-today is 3.6.0, and docs/romwbw.md records that 3.6.0 does not reach the boot
-prompt in the 64 KB simulation -- 3.5.1 is the release this board is proved on.
+Without --romwbw you get whatever the catalog calls its default, which is the
+current release -- 3.6.0 today, and what you almost always want.  Naming one
+is for pinning a build to a release, or for reaching a development snapshot,
+which is hidden from a bare run because naming it is the opt-in.
 
 It walks the v0 catalog at avwohl/romwbw_disks -- one stable index URL, then
 one catalog per RomWBW release -- and reads that catalog's top-level
@@ -359,7 +360,7 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-o", "--out", help="write the ROM image here")
     ap.add_argument("--romwbw", default=DEFAULT_VERSION,
-                    help="RomWBW release to take, e.g. 3.5.1 (default: the index's)")
+                    help="RomWBW release to take, e.g. 3.6.0 (default: the index's)")
     ap.add_argument("--index-url", default=DEFAULT_INDEX_URL,
                     help="override the compiled-in index URL")
     ap.add_argument("--prerelease", action="store_true", default=DEFAULT_PRERELEASE,

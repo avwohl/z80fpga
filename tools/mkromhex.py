@@ -6,12 +6,12 @@ ours, and they change independently.  Point this at one you built or downloaded
 yourself, the way Z80_TESTS points the opcode suite at a SingleStepTests
 checkout, or let tools/romwbw_fetch.py fetch one:
 
-    python tools/mkromhex.py path/to/SBC_simh_std.rom sim/romwbw64k.hex --size 65536
+    python tools/mkromhex.py path/to/SBC_simh_std.rom sim/romwbw512k.hex --size 524288
 
 --size both truncates and pads: a short file is padded with 0xFF, the erased
-state of a real ROM, and a long one is cut.  64 KB is the first two 32 KB banks
-of a 512 KB RomWBW image, which is HBIOS and the loader -- enough to reach the
-boot prompt, and all that fits beside 512 KB of RAM in block RAM.
+state of a real ROM, and a long one is cut.  512 KB is a whole RomWBW image,
+all sixteen 32 KB banks, which is what the simulation and the Nexys bitstream
+both carry.
 
 Both of those change the image, so both say so.  A <hexfile>.provenance.json
 goes down beside the hex naming the image it came from and what that image

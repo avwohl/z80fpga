@@ -7,14 +7,16 @@
 // The ROM image is not in this repository, and it has to be a *stock* one:
 // an emulator ROM's bank 0 is an HBIOS proxy whose services are all an OUT to
 // a port only an emulator answers, so nothing drives the console and it
-// prints nothing here.  Use an image you have, or tools/romwbw_fetch.py, and
-// convert the first 64 KB:
+// prints nothing here.  Use an image you have, or tools/romwbw_fetch.py:
 //
-//   python tools/mkromhex.py .../SBC_simh_std.rom sim/romwbw64k.hex --size 65536
+//   python tools/mkromhex.py .../SBC_simh_std.rom sim/romwbw512k.hex --size 524288
 //
-// 64 KB is HBIOS in bank 0 and the loader in bank 1, which is as far as this
-// goes; the ROM disk in banks 2-15 is not here, so the loader's disk commands
-// will find nothing.  That is the point of the milestone, not a fault.
+// The whole 512 KB, at the same ROM_BANKS the Nexys build uses.  This carried
+// only the first 64 KB once -- HBIOS in bank 0, the loader in bank 1 -- on the
+// grounds that this is what fits in block RAM beside 512 KB of RAM.  That is a
+// limit on the part and not on a simulation, and RomWBW 3.6.0 moved the device
+// inventory into bank 3, so the short window reached the prompt on 3.5.1 and
+// hung on 3.6.0 over where a string had moved.  docs/romwbw.md has it.
 //
 // The console is RomWBW's SSER at 0x68/0x6D, so the SoC is built with
 // CONSOLE_SSER = 1.  With the emulator's 0x00/0x01 ports instead this prints
@@ -38,9 +40,9 @@ module tb_romwbw;
       .CPU_DIV      (1),
       .BAUD         (BAUD),
       .CONSOLE_SSER (1'b1),
-      .ROM_BANKS    (2),                  // 64 KB: HBIOS + loader
+      .ROM_BANKS    (16),                 // 512 KB: the whole image, as on hardware
       .RAM_BANKS    (16),                 // 512 KB, common bank 0x8F
-      .ROM_INIT     ("sim/romwbw64k.hex"),
+      .ROM_INIT     ("sim/romwbw512k.hex"),
       .UCODE_MEM    ("rtl/core/z80_ucode.mem"),
       .DISP_MEM     ("rtl/core/z80_dispatch.mem")
   ) dut (
