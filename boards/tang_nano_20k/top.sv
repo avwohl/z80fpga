@@ -33,35 +33,16 @@ module top (
     input  logic       uart_rx        // from it
 );
 
-  // ------------------------------------------------------- the system clock
-  // Half the board's 27 MHz, on a global buffer, with CPU_DIV = 1.  That is
-  // the Icepi Zero's arrangement and it is the only one available here: see
-  // the SoC note below for why CPU_DIV must be 1 on a nextpnr board, and
-  // ../../boards/icepi_zero/README.md for the same reasoning on an ECP5.
-  //
-  // 13.5 MHz rather than 27 doubles the margin on the one path the bank
-  // check exercises and nothing else does -- the MMU's cur_bank register
-  // through phys_addr into the block RAM's address pins.  nextpnr's Gowin
-  // timing model is not something this repository has ever checked against
-  // silicon, so where a path is only exercised by the thing that fails, the
-  // clock is the cheap variable to move.
-  logic clk_div = 1'b0;
-  logic clk_sys;
-
-  always_ff @(posedge clk) clk_div <= ~clk_div;
-
-  BUFG u_bufg (.I (clk_div), .O (clk_sys));
-
   // ------------------------------------------------------------- the reset
-  // 128 clocks after configuration, which is 9.5 us at 13.5 MHz.
+  // 128 clocks after configuration, which is 4.7 us at 27 MHz.
   logic [7:0] rstcnt = 8'h00;
   logic       rst_n;
 
-  always_ff @(posedge clk_sys) if (!rstcnt[7]) rstcnt <= rstcnt + 8'd1;
+  always_ff @(posedge clk) if (!rstcnt[7]) rstcnt <= rstcnt + 8'd1;
   assign rst_n = rstcnt[7];
 
   // --------------------------------------------------------------- the SoC
-  // CPU_DIV is 1, and the fabric clock is the halved one made above.
+  // The 27 MHz board clock goes in undivided, and CPU_DIV is 1.
   //
   // CPU_DIV = 2 was tried first and the board would not run: the banner never
   // appeared, and every throwaway image that touched data memory failed while
@@ -72,13 +53,20 @@ module top (
   // why both of the other nextpnr boards use CPU_DIV = 1, and it is why this
   // one does.  A Vivado board can have CPU_DIV > 1 because an XDC can say so.
   //
-  // The fabric clock is halved above, so the Z80 runs at 13.5 MHz -- still
-  // faster than the 8 MHz Nexys that boots CP/M today.
+  // It costs nothing here: the design routes at 40.6 MHz, so the Z80 runs at
+  // the full 27 MHz -- faster than the Nexys that boots CP/M today.
+  //
+  // Halving the clock to 13.5 MHz through a BUFG was tried too, on the theory
+  // that the bank check's cur_bank -> phys_addr -> block-RAM-address path was
+  // marginal and only that test drives it.  It is not marginal: a flash-booted
+  // 13.5 MHz build printed 4411 banners and never reached "banked memory ok",
+  // exactly as the 27 MHz one does.  The slower clock bought nothing, so it is
+  // not kept -- but do not spend the idea twice.
   logic [7:0] led8;
 
   z80_soc #(
-      .CLK_HZ    (13_500_000),
-      .CPU_DIV   (1),                 // a 13.5 MHz Z80; see above
+      .CLK_HZ    (27_000_000),
+      .CPU_DIV   (1),                 // a 27 MHz Z80; see above
       .BAUD      (115200),
       .ROM_BANKS (1),                 // a 32 KB bank ...
       .ROM_AW_P  (13),                // ... holding an 8 KB image, mirrored
@@ -87,7 +75,7 @@ module top (
       .UCODE_MEM ("z80_ucode.mem"),
       .DISP_MEM  ("z80_dispatch.mem")
   ) u_soc (
-      .clk        (clk_sys),
+      .clk        (clk),
       .rst_n      (rst_n),
       .uart_rx    (uart_rx),
       .uart_tx    (uart_tx),
@@ -113,9 +101,9 @@ module top (
   logic [23:0] hb = '0;
   logic        tx_seen;
 
-  always_ff @(posedge clk_sys) hb <= hb + 1'b1;
+  always_ff @(posedge clk) hb <= hb + 1'b1;
 
-  always_ff @(posedge clk_sys) begin
+  always_ff @(posedge clk) begin
     if (!rst_n)        tx_seen <= 1'b0;
     else if (!uart_tx) tx_seen <= 1'b1;
   end

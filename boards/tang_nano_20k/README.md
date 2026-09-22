@@ -173,17 +173,30 @@ up, and between them they cleared both prime suspects: **`LDIR` completes and
 
 So the remaining suspect is the one path nothing else exercises: the MMU's
 `cur_bank` register through `phys_addr` into the block RAM's address pins,
-which only the bank check drives. The board now halves its 27 MHz through a
-`BUFG` and runs the Z80 at 13.5 MHz with `CPU_DIV = 1`, which is the Icepi
-Zero's arrangement and roughly doubles the margin on that path. **This is a
-hypothesis, not a measurement**: it was not confirmed on hardware because the
-serial link went down and only a physical replug has ever brought it back.
-The bitstream on the board is that build.
+which only the bank check drives. Note also that **every test that passes
+touches only the high window** -- `08000h` and `0FFF0h` are both the common
+bank -- while the checker writes to `4000h`, in the low banked window. That is
+untested ground, and it is where the monitor dies.
 
-Note what nextpnr reports: `Max frequency for clock 'clk_sys': 38.64 MHz (PASS
-at 27.00 MHz)`. It does not know `clk_sys` is half of `clk`, exactly as
-CLAUDE.md records for the Icepi -- so the real margin against 13.5 MHz is
-2.9x, and the constraint is stricter than the hardware, not looser.
+Two things were tried and did *not* fix it, recorded so nobody spends them
+again:
+
+- **Halving the clock.** 13.5 MHz through a `BUFG` with `CPU_DIV = 1`, on the
+  theory that the bank-switch path was marginal. A flash-booted 13.5 MHz build
+  printed 4411 banners and never reached `banked memory ok`, exactly as 27 MHz
+  does. Reverted.
+- **Everything on the host USB side.** Selective suspend off, JTAG down to
+  1 MHz, `pnputil /restart-device` on the FTDIBUS child, the MI_01 interface
+  and the parent composite device, and a full `/disable-device` +
+  `/enable-device` cycle. All succeeded and re-enumerated cleanly; the UART
+  channel stayed dead. The fault is the board's BL616 bridge, not Windows.
+
+A claim made earlier and since withdrawn: that SRAM programming over JTAG is
+what kills the UART. It is not -- program-then-capture worked repeatedly
+earlier in the same session. The simpler reading that fits every observation
+is that the link is good for a window after a power-up and then degrades,
+whatever is done with it. That is also why a multi-minute flash write wedged
+partway while a ten-second SRAM load does not.
 
 The bisection that got here, before the `CPU_DIV` fix was found:
 
