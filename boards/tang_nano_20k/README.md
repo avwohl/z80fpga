@@ -237,3 +237,24 @@ Makefile now clocks JTAG at 1 MHz rather than openFPGALoader's default 6 MHz,
 since a marginal FTDI link often holds at the lower rate. Whether either helps
 is unknown. If it stays unreliable the on-board BL616 bridge is the suspect,
 and reflashing it is a Sipeed exercise rather than anything in this repository.
+
+## The state of the board itself
+
+The board's flash currently holds a **diagnostic**, not the monitor: a staged
+test that emits `A` once it is alive, `B` once `LDIR` into the common bank has
+completed, and then `P` or `E` for whether `4000h` in the low banked window
+reads back what was written. One power-up prints the answer. `make flash` puts
+the real build back.
+
+**Its serial channel has failed.** JTAG is perfectly healthy -- `idcode 0x81b`,
+`GW2A(R)-18(C)`, and `openFPGALoader` reports `DONE` on every load -- while the
+UART delivers nothing. COM7 enumerates, opens without error, and every USB
+device reports OK, so the host side is not at fault. Spent on it, all
+successful and none of them any help: Windows USB selective suspend disabled,
+JTAG dropped from 6 MHz to 1 MHz, `pnputil /restart-device` on the FTDIBUS
+child, on the `MI_01` interface and on the parent composite device, a full
+`/disable-device` + `/enable-device` cycle, and `openFPGALoader --reset`. A
+physical replug has revived it before and nothing else has.
+
+So the last measurement needs a power cycle, and the diagnostic in flash is
+there to make that power cycle produce the answer by itself.
