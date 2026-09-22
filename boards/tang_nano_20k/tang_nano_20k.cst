@@ -1,0 +1,201 @@
+// Sipeed Tang Nano 20K (Gowin GW2AR-LV18QN88C8/I7, QN88) constraints for the
+// z80fpga SoC.  Tier (a): the core, the UART and sw/boot.z80 in the part's
+// BSRAM, with no SDRAM and no microSD.  Those two are noted at the bottom as
+// comments rather than as constraints.
+//
+// Provenance.  Every pin here comes from Sipeed's own constraint files in
+// github.com/sipeed/TangNano-20K-example, and every one is cross-checked
+// against a second source, named on the pin.  For eight of the nine that
+// second source is another file of Sipeed's; for uart_rx on 70, which only
+// one of their files names at all, it is litex-boards'
+// litex_boards/platforms/sipeed_tang_nano_20k.py.  litex-boards agrees with
+// all nine either way.  The attribute spellings -- IO_TYPE, PULL_MODE,
+// DRIVE -- are Sipeed's too.  This is pin numbers rather than a copy of any
+// one of those files, so there is no THIRD-PARTY.txt entry -- the same
+// position as boards/c0_microsd/c0_microsd.pcf.
+//
+// Nine pads in three banks, all 3.3 V: clk in bank 7, the six LEDs in bank 6,
+// the UART pair in bank 1.  Nothing here mixes an I/O standard inside a bank,
+// which is why no line needs the BANK_VCCIO=3.3 that two of Sipeed's files
+// carry.
+//
+// Three things are worth knowing before the first build rather than after it.
+// All three were checked on this machine, not read off a datasheet:
+//
+//   * A NAME THAT MATCHES NO PORT IS NOT AN ERROR.  nextpnr-himbaechel prints
+//     "Info: Cell <name> not found" -- at Info level, once for the IO_LOC and
+//     again for the IO_PORT -- and then places that pad wherever it likes.
+//     This is the Gowin spelling of the two traps CLAUDE.md lists for the
+//     other families: the XDC's "No valid object(s) found" and the LPF line
+//     that parses and does nothing.  Grep the nextpnr log for "not found"
+//     AFTER its "Reading constraints..." line.  A blanket grep is useless:
+//     55 of them come before it, one per in-package SDRAM pad, because the
+//     device database declares O_sdram_* and IO_sdram_* whether a design uses
+//     them or not.
+//     The danger runs one way only, which is worth knowing before adding a
+//     port.  A port of top.sv with no line HERE is loud: nextpnr stops during
+//     Pack IOBs and exits non-zero.  Note what it names, though -- the pad's
+//     buffer cell, not the port.  Deleting the led[5] lines gives
+//     "ERROR: Unconstrained IO:led_OBUF_O", not "led[5]", so grep for
+//     "Unconstrained IO" and nothing narrower.  It is the other direction --
+//     a line here naming something top.sv does not have -- that is silent.
+//
+//   * A .cst CARRIES NO TIMING CONSTRAINT AT ALL.  Gowin keeps those in a
+//     .sdc -- Sipeed's own led/blink_leds/src/blink_leds.sdc is the one line
+//     "create_clock -name clk_27M -period 37.037 ..." -- and
+//     nextpnr-himbaechel does not read one.  The clock target comes from
+//     --freq on the nextpnr command line and from nowhere else, so the
+//     Makefile has to pass it and there is no line here that can be checked
+//     for having applied.  This is the opposite of the Icepi Zero, whose
+//     Makefile fails the build when "constraining clock net 'clk_sys'" is
+//     missing from the log; there is no such line to look for here, and
+//     writing a grep for one would fail every build.
+//     Placed at --freq 27, the 16 KB-ROM map in top.sv reports
+//     "Max frequency for clock 'u_soc.clk': 37.80 MHz (PASS at 27.00 MHz)".
+//     The clock's NAME is worth reading twice: with pin 4 fed straight in
+//     there is no derived net for nextpnr to name, so it names the clock
+//     after the port of the z80_soc instance it arrives at.  A build that
+//     halves the clock first does report a net called clk_sys -- which is
+//     exactly the build the next paragraph says not to make.
+//
+//   * FEED PIN 4 TO THE FABRIC UNDIVIDED, and take the Z80 down with the
+//     SoC's CPU_DIV instead.  boards/icepi_zero/top.sv halves its board clock
+//     because the core routes at 27.9-29.5 MHz on an LFE5U-25F and 50 MHz is
+//     out of reach.  Here it routes at 37.8 MHz, comfortably over the 27 MHz
+//     the board offers, so halving buys nothing and only adds a derived clock
+//     on a global buffer for the timing analysis to worry about.
+//     CPU_DIV = 2 then gives a 13.5 MHz Z80, and uart.sv's DIV = CLK_HZ/BAUD
+//     is taken from the undivided 27 MHz: 27000000/115200 truncates to 234,
+//     which is 115385 baud, 0.16% fast.  See top.sv.
+
+// ------------------------------------------------------------------ clock
+// 27 MHz.  The rate is proved as well as the pin: all three LED examples
+// count to 27000000/2 for their half second, uart/src/uart_top.v declares
+// CLK_FRE = 27, and blink_leds.sdc asks for a 37.037 ns period.
+// Thirteen of the sixteen .cst files in that repository put a clock on pin 4
+// -- led/blink_led, led/blink_leds, led/flow_led, uart/src/top.cst,
+// picorv32/src/fpga_project.cst and the two rgb_lcd cross_bar files as
+// "clk"; nestang/src/nestang.cst as "sys_clk"; hdmi/src/hdmi.cst as "I_clk";
+// audio/src/audio.cst and ws2812/src/ws2812.cst as "clk"; and the two
+// rgb_lcd color_bar files as "XTAL_IN".  Of the remaining three, two (the
+// rgb_lcd color_bar_1 files) give their clock an IO_PORT and no IO_LOC at
+// all, and the third, nestang/src/nesdemo.cst, is for a different package
+// and writes its pins alphanumerically (sys_clk on H11) -- so it is not a
+// second opinion about this one.  apicula's own QFN88 table calls pin 4
+// IOL7A with the alternate function LPLL1_T_IN, which is the dedicated
+// clock input it ought to be.
+// PULL_MODE=NONE rather than the UP most of those files write: an oscillator
+// drives this pad.  nestang.cst and both rgb_lcd color_bar files say NONE
+// for it too.
+IO_LOC  "clk" 4;
+IO_PORT "clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+
+// ---------------------------------------------------------------- console
+// 115200 8N1 to the on-board debugger.  That is the same USB-C socket the
+// bitstream arrives over, so the console needs no second cable -- the Icepi
+// Zero's FT231X arrangement exactly.  Named from the FPGA's end: uart_tx is
+// what we transmit, and that is from source rather than from the name --
+// uart/src/uart_top.v declares uart_tx an output and uart_rx an input, and
+// uart/src/top.cst puts them on 69 and 70 in that order.
+// 69 is agreed by uart/src/top.cst and picorv32/src/fpga_project.cst (which
+// calls it "ser_tx").  70 appears in only one file of Sipeed's,
+// uart/src/top.cst, so its second witness is litex-boards, whose "serial"
+// entry is rx on 70 and tx on 69.
+// DO NOT take 30 and 31 from nestang/src/nestang.cst.  Its own comment says
+// "UART through USB-TTL dongle": those are an external adapter on the header,
+// not the on-board debugger, and a build wired to them is mute on the USB-C
+// while looking entirely correct in the log.
+// PULL_MODE=UP on both, so each line sits at the UART's idle mark level
+// between configuration and the end of top.sv's reset counter instead of
+// handing the host a break.  (uart.sv resets tx_sr to 10'h3FF, so the
+// transmitter idles high the moment the design is live; the pull only covers
+// the gap before that.)  DRIVE has no meaning on an input, so uart_rx does
+// not carry one.
+IO_LOC  "uart_tx" 69;
+IO_PORT "uart_tx" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC  "uart_rx" 70;
+IO_PORT "uart_rx" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// ------------------------------------------------------------------- LEDs
+// Six, and ACTIVE LOW -- a 0 lights one.  Sipeed's blink_leds.v and
+// flow_led.v both end with "assign leds = ~leds_value;", and litex-boards
+// names the same six pads "led_n".  (led/blink_led/src/blink_led.v, the
+// one-LED example, does NOT invert -- it drives pin 15 directly -- so it is
+// not evidence either way.)  top.sv does the inversion, so led[0] here
+// lights on a 1 in bit 0 of the SoC's LED port at 0xFF.
+// led[0]=15 up to led[5]=20 is blink_leds.cst and flow_led.cst byte for
+// byte, and nestang.cst agrees on 15 and 16.
+// hdmi/src/hdmi.cst puts the same six pads in the OPPOSITE order --
+// O_led[4]=15 rising to O_led[0]=19, with 20 called "running".  That is one
+// design's own bit numbering, not a second opinion about the board; do not
+// read it as a contradiction and do not copy it.
+// PULL_MODE=UP keeps them dark between configuration and reset release,
+// which is what active-low wants.  DRIVE=8 is what every Sipeed file that
+// drives these pads AS LEDS uses -- blink_leds, flow_led, blink_led, hdmi
+// and nestang.  nestang.cst also drives 17, 18 and 20 as a joystick port
+// with no DRIVE at all, which is a different use of the pads, not a
+// disagreement about them.
+IO_LOC  "led[0]" 15;
+IO_PORT "led[0]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC  "led[1]" 16;
+IO_PORT "led[1]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC  "led[2]" 17;
+IO_PORT "led[2]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC  "led[3]" 18;
+IO_PORT "led[3]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC  "led[4]" 19;
+IO_PORT "led[4]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC  "led[5]" 20;
+IO_PORT "led[5]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+
+// --------------------------------------------- the buttons, and why neither
+// There is no reset button in this design.  rst_n comes off a counter in
+// top.sv, the way boards/c0_microsd/top.sv and boards/icepi_zero/top.sv both
+// do it, and the two button pads are left unconstrained.  Two reasons:
+//
+//   1. Sipeed's own files do not agree on the pull, which means they do not
+//      agree on the polarity.  audio/src/audio.cst and
+//      picorv32/src/fpga_project.cst say PULL_MODE=UP -- idle high, switch to
+//      ground, active low.  hdmi/src/hdmi.cst says
+//      PULL_MODE=DOWN SINGLE_RESISTOR=ON on both pads -- idle low, switch to
+//      3V3, active high.  nestang/src/nestang.cst says PULL_MODE=NONE and
+//      leaves it to the board.  Getting that backwards on a RESET gives a
+//      board that configures, lights nothing and says nothing, which is
+//      exactly what a broken toolchain looks like -- and proving the
+//      toolchain is the whole point of this first build.
+//   2. Nothing needs one.  openFPGALoader reloads the bitstream in seconds
+//      over the same cable the console is on.
+//
+// The pins, for whoever wants one later: 88 is S1, agreed by uart/src/top.cst
+// ("rst"), picorv32/src/fpga_project.cst ("resetn"), nestang.cst ("s1"),
+// hdmi/src/hdmi.cst ("I_rst") and
+// rgb_lcd/lcd_480_272/color_bar/src/tang_nano_20K_LCD.cst ("Reset_Button").
+// 87 is S2, agreed by audio/src/audio.cst ("rst") and hdmi/src/hdmi.cst
+// ("I_key").  litex-boards has btn 0 = 88 and btn 1 = 87.
+// Both are also configuration straps: apicula's QFN88 table calls pin 88
+// IOR30A with the alternate function MODE0 and pin 87 IOR30B with MODE1.
+// That does not stop them being ordinary inputs afterwards -- five of the
+// designs above read 88 as a fabric port -- but the straps are sampled at
+// power-up, before any of this file reaches the pad, so nothing written here
+// can fix a board that came up in the wrong mode.
+// Settle the polarity against the board before trusting either line below,
+// and note that uncommenting one without adding the matching port to top.sv
+// is the silent drop described at the top of this file, not an error.
+//
+// IO_LOC  "btn_n[0]" 88;
+// IO_PORT "btn_n[0]" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+// IO_LOC  "btn_n[1]" 87;
+// IO_PORT "btn_n[1]" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// ------------------------------------------------------ not in this build
+// microSD, which tier (b) needs so rom_loader.sv can stage the 512 KB RomWBW
+// image off the card: 83 CLK, 82 CMD (MOSI), 84 DAT0 (MISO), 85 DAT1,
+// 80 DAT2, 81 DAT3.  Agreed by nestang/src/nestang.cst and litex-boards.
+// The one that would silently be wrong: in SPI mode chip select is DAT3 on
+// 81, not CMD on 82 -- litex's "spisdcard" entry has cs_n on 81 and mosi on
+// 82, and sd_spi.sv's sd_cs belongs on 81.
+//
+// The 8 MB of SDR SDRAM in the package needs no lines here at all.  Its pads
+// are fixed and the device database names them itself, which is why nextpnr
+// prints 55 "Cell O_sdram_* / IO_sdram_* not found" lines before it has even
+// opened this file.
