@@ -140,8 +140,37 @@ What is settled:
   258 bytes in 25 s and 106 in 8 s, against a predicted 12.9/s. So pin 69, the
   bridge, the console port and `rtl/soc/uart.sv` at 27 MHz are all good.
 
-More was established by bisecting with throwaway images, each a few
-instructions long, loaded over JTAG and read on the console:
+**It prints.** `CPU_DIV = 2` was the fault, and the fix is `CPU_DIV = 1`:
+
+```
+z80fpga ready
+z80fpga ready
+...
+```
+
+`CPU_DIV > 1` makes the core advance on a `clk_en` tick, which turns the
+memory paths into multi-cycle ones -- and CLAUDE.md already records that
+nextpnr accepts a `MULTICYCLE` constraint in total silence and does nothing
+with it. A Vivado board can have `CPU_DIV > 1` because an XDC can say so; the
+Arty does. A nextpnr board cannot, which is why `boards/icepi_zero` and
+`boards/c0_microsd` both use 1. This board now does too, and it costs nothing:
+the design routes at 40.6 MHz, so the Z80 runs at the full 27 MHz -- faster
+than the Nexys that boots CP/M today.
+
+The symptom was worth recording because it was so misleading. With
+`CPU_DIV = 2`, instruction fetch and both I/O directions worked perfectly
+while **every** access to data memory failed, which reads like a broken block
+RAM and is not one. With `CPU_DIV = 1` a throwaway image that stores `0A5h`
+at `0FFF0h` and reads it back returned the right nibble 8904 times running.
+
+What is left is the bank check. The banner prints and then the monitor
+restarts, looping on the banner for ever. `sw/boot.z80` copies its bank
+checker into the common bank with `LDIR` and does `call 08000h` -- a block
+copy, then instruction fetch out of RAM, neither of which the passing tests
+cover. A test for exactly that was built and never got a clean run before the
+USB link dropped again, so it is the next thing to try.
+
+The bisection that got here, before the `CPU_DIV` fix was found:
 
 - **The Z80 executes from the block-RAM ROM, and `OUT` works.** A loop of
   `ld a,5Ah / out (1),a` delivered clean `Z` bytes.

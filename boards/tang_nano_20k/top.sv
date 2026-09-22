@@ -42,16 +42,24 @@ module top (
   assign rst_n = rstcnt[7];
 
   // --------------------------------------------------------------- the SoC
-  // The 27 MHz board clock goes in undivided and CPU_DIV makes the T-states.
-  // Halving it first, the way the Icepi does, is worse here and was measured:
-  // the derived clock picks up 2.09 ns of skew and a -0.31 ns hold violation.
-  // The Icepi needs its divider because the core only routes at 27.9-29.5 MHz
-  // on an ECP5; here it routes at 37.8, comfortably above the board clock.
+  // The 27 MHz board clock goes in undivided, and CPU_DIV is 1.
+  //
+  // CPU_DIV = 2 was tried first and the board would not run: the banner never
+  // appeared, and every throwaway image that touched data memory failed while
+  // instruction fetch and both I/O directions worked.  CPU_DIV > 1 makes the
+  // core advance on a clk_en tick, which turns the memory paths into
+  // multi-cycle ones -- and CLAUDE.md records that nextpnr accepts a
+  // MULTICYCLE constraint in total silence and does nothing with it.  That is
+  // why both of the other nextpnr boards use CPU_DIV = 1, and it is why this
+  // one does.  A Vivado board can have CPU_DIV > 1 because an XDC can say so.
+  //
+  // It costs nothing here: the design routes at 40.6 MHz, so the Z80 runs at
+  // the full 27 MHz -- faster than the Nexys that boots CP/M today.
   logic [7:0] led8;
 
   z80_soc #(
       .CLK_HZ    (27_000_000),
-      .CPU_DIV   (2),                 // a 13.5 MHz Z80
+      .CPU_DIV   (1),                 // a 27 MHz Z80; see above
       .BAUD      (115200),
       .ROM_BANKS (1),                 // a 32 KB bank ...
       .ROM_AW_P  (13),                // ... holding an 8 KB image, mirrored
