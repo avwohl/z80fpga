@@ -34,6 +34,14 @@ block **0x400000**, which is 2 GiB in:
 dd if=SBC_simh_std.rom of=/dev/sdX bs=512 seek=4194304 conv=fsync
 ```
 
+That is a stock `SBC_simh_std.rom` — one you have, or
+`python tools/romwbw_fetch.py -o SBC_simh_std.rom`, which takes
+`Binary/SBC_simh_std.rom` out of the upstream release package the romwbw_disks
+catalog names and checks the package against its published SHA-256. It has to
+be the stock image and not an emulator ROM;
+[../../nexys_a7_100t/romwbw/README.md](../../nexys_a7_100t/romwbw/README.md)
+says why. `dd` takes the `.rom` itself, not a `.hex`.
+
 That block is not arbitrary. `hdsk.sv` puts its two units 0x200000 blocks
 apart, so unit 0 owns blocks 0 to 0x1FFFFF and unit 1 owns 0x200000 to
 0x3FFFFF; 0x400000 is the first block after both of them. The card therefore

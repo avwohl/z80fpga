@@ -31,7 +31,7 @@ all: sim
 gen $(GEN): tools/gen_z80.py tools/z80_enc.py
 	$(PYTHON) tools/gen_z80.py
 
-boot sw/boot.hex: sw/boot.z80
+boot sw/boot.hex: sw/boot.z80 tools/zasm.py
 	$(PYTHON) tools/zasm.py sw/boot.z80 -o sw/boot.hex --size 32768
 
 sim: sim/tb_sst.vvp sim/tb_soc.vvp sim/tb_irq.vvp sim/tb_ddr2ram.vvp \
@@ -64,7 +64,7 @@ sim/tb_sdram_soc.vvp: sim/tb_sdram_soc.sv sim/sdram_model.sv $(SOC) rtl/mem/sdra
 # A ROM image staged off a card into SDRAM and then executed out of it.  Four
 # blocks rather than the 1024 a RomWBW image needs: enough to prove the
 # sequencing, short enough to simulate, and the monitor is in the first one.
-sim/boot2k.hex: sw/boot.z80
+sim/boot2k.hex: sw/boot.z80 tools/zasm.py
 	$(PYTHON) tools/zasm.py sw/boot.z80 -o $@ --size 2048
 
 ROMLOAD := rtl/mem/sdram_ram.sv rtl/soc/rom_loader.sv rtl/soc/sd_spi.sv \
@@ -93,8 +93,11 @@ ROMWBW_INDEX_URL ?=
 # fetched image gets a name nobody would type, so that pointing ROMWBW_ROM at
 # a file of your own can never put this rule in the graph and overwrite it.
 ifneq ($(ROMWBW_VERSION)$(ROMWBW_INDEX_URL),)
+# Noted here, refused in the recipe: a parse-time $(error) would stop `make
+# clean` and `make test` too, and both variables may perfectly well be sitting
+# in the environment.
 ifneq ($(ROMWBW_ROM),)
-$(error set ROMWBW_ROM for an image you have, or ROMWBW_VERSION to fetch one, not both)
+ROMWBW_BOTH := 1
 endif
 ROMWBW_ROM := sim/romwbw-fetched.rom
 
@@ -111,9 +114,16 @@ endif
 # the same trap as having no prerequisite at all, just harder to see.
 # tools/mkromhex.py decides by the image's hash and leaves the hex alone when
 # it already came from it, so asking every time costs nothing.
-sim/romwbw512k.hex: $(ROMWBW_ROM) FORCE
+# The prerequisite names the fetched image, never a path you gave: a
+# command-line ROMWBW_ROM overrides the assignment above (make's rule, not
+# ours), and make would then stop at "no rule to make target" before any
+# guard below could say what was actually wrong.  With both set there is no
+# prerequisite at all, so the refusal happens before anything is fetched.
+sim/romwbw512k.hex: $(if $(ROMWBW_BOTH),,$(if $(ROMWBW_VERSION)$(ROMWBW_INDEX_URL),sim/romwbw-fetched.rom)) FORCE
+	@test -z "$(ROMWBW_BOTH)" || 	  (echo "set ROMWBW_ROM for an image you have, or ROMWBW_VERSION to fetch one, not both" && false)
 	@test -n "$(ROMWBW_ROM)" || 	  (echo "set ROMWBW_ROM=path/to/a/RomWBW .rom image, or ROMWBW_VERSION=3.6.0 to fetch one" && false)
-	$(PYTHON) tools/mkromhex.py $(ROMWBW_ROM) $@ --size 524288
+	@test -f "$(ROMWBW_ROM)" || 	  (echo "ROMWBW_ROM is set but $(ROMWBW_ROM) is not there" && false)
+	$(PYTHON) tools/mkromhex.py "$(ROMWBW_ROM)" $@ --size 524288
 
 sim/tb_romwbw.vvp: sim/tb_romwbw.sv $(SOC) $(GEN)
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_romwbw.sv $(SOC)
@@ -124,7 +134,7 @@ sim/tb_hdsk.vvp: sim/tb_hdsk.sv rtl/soc/hdsk.sv rtl/soc/sd_spi.sv
 
 # The whole SoC driving HDSK from a real Z80: OTIR, the MMU translating the
 # DMA address, and the memory behind it, none of which tb_hdsk can reach.
-sim/hdsk_test.hex: sim/hdsk_test.z80
+sim/hdsk_test.hex: sim/hdsk_test.z80 tools/zasm.py
 	$(PYTHON) tools/zasm.py sim/hdsk_test.z80 -o $@ --size 32768
 
 sim/tb_hdsk_soc.vvp: sim/tb_hdsk_soc.sv $(SOC) rtl/mem/ddr2_ram.sv rtl/soc/sd_spi.sv rtl/soc/hdsk.sv $(GEN) sim/hdsk_test.hex
@@ -158,8 +168,11 @@ synth: $(GEN)
 	$(YOSYS) -p "read_verilog -sv -I rtl/core $(CORE); \
 	             synth_ice40 -top z80_core; stat"
 
+# sw/boot.hex is committed, so it is deliberately not here: clean must not
+# dirty the tree.
 clean:
-	rm -f sim/*.vvp sim/vec.txt sim/res.txt
+	rm -f sim/*.vvp sim/vec.txt sim/res.txt sim/boot2k.hex sim/hdsk_test.hex
+	rm -f sim/romwbw*.hex sim/romwbw-fetched.rom sim/*.provenance.json sim/*.partial
 
 FORCE:
 

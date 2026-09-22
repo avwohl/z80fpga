@@ -137,7 +137,8 @@ def http_get(url, max_bytes, timeout, retries):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": UA})
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                declared = r.length
+                # Only an HTTP response carries .length; a file:// one does not.
+                declared = getattr(r, "length", None)
                 data = r.read(max_bytes + 1)
         except urllib.error.HTTPError as e:
             last = "HTTP %s" % e.code
@@ -183,7 +184,10 @@ def download(url, dest, want_sha, timeout, retries):
             say("the cached %s does not match the catalog, fetching it again"
                 % os.path.basename(dest))
 
-    os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+    try:
+        os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+    except OSError as e:
+        raise Bad("cannot use %s as a cache: %s" % (os.path.dirname(dest), e))
     part = dest + ".partial"
     last = None
     for attempt in range(retries + 1):
@@ -194,7 +198,7 @@ def download(url, dest, want_sha, timeout, retries):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": UA})
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                declared = r.length
+                declared = getattr(r, "length", None)
                 with open(part, "wb") as f:
                     while True:
                         chunk = r.read(1 << 20)
@@ -384,8 +388,8 @@ def main() -> int:
 
     # An exact release, already sitting there, is the whole answer: do not ask
     # anybody anything.  This is what lets a rebuild work with no network.
-    if args.out and args.romwbw and already(out_note(args.out), args.index_url,
-                                            args.romwbw, args):
+    if (not args.list and args.out and args.romwbw
+            and already(out_note(args.out), args.index_url, args.romwbw, args)):
         say("%s is already RomWBW %s, untouched" % (args.out, args.romwbw))
         print(args.out)
         return 0

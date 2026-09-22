@@ -98,9 +98,14 @@ netlist it was proved with. `SDRAM_ROM` shrinks `u_rom` to two bytes rather
 than removing it for the same instinct: a generate block would rename every
 cell under that ROM.
 
-**Rebuild that board after any change to `rtl/soc/` or `rtl/mem/`**, and check
-for `ERROR: [DRC` in the log -- `place_design` failing is the failure mode,
-and it takes about 25 minutes to find out.
+**Rebuild that board after any change to `rtl/`**, and check for `ERROR: [DRC`
+in the log -- `place_design` failing is the failure mode, and it takes about 25
+minutes to find out. That used to say `rtl/soc/` or `rtl/mem/`, which was too
+narrow: a two-line change in `rtl/core/z80_core.sv` on 2026-09-22 moved the
+flattened core by about 0.8% of its cells, and at 94.81% block RAM that is
+exactly the kind of perturbation this section is about. It rebuilt clean --
+0 DRC, no `REQP-1962`, still 128 of 135 RAMB36, WNS +0.562 ns -- and ran on the
+board, but the point is that it had to be found out rather than assumed.
 
 What is *not* fragile is the ROM's contents, and it is worth knowing before
 this section scares you off trying another image. A rebuild carrying RomWBW

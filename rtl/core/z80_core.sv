@@ -384,7 +384,16 @@ module z80_core #(
     endcase
   end
 
-  assign nx_go     = nx_ok(`UF(uw_cur, NX), blk_rep);
+  // always_comb, not assign, and it is not a style choice.  nx_ok -> cond
+  // reads rF and ir_x, which are not arguments, and Icarus builds a continuous
+  // assignment's sensitivity list from the call's arguments alone -- so `assign`
+  // here recomputes only when the NX field changes.  A JR cc or RET cc landing
+  // on the same micro-op address as a preceding not-taken one then reuses that
+  // decision whatever the flags now say.  Synthesis is not affected; every
+  // other tool puts rF in the cone.  The opcode suite cannot catch it either,
+  // because SST runs one instruction per vector so upc always moves.  What
+  // caught it was RomWBW's MD_CAP printing `--` instead of `384KB,LBA`.
+  always_comb nx_go = nx_ok(`UF(uw_cur, NX), blk_rep);
   // True through the T-state in which a micro-op's action will be applied,
   // so the combinational views above switch to the micro-op being entered.
   assign do_enter  = cyc_done && (phase != PH_XD) &&
@@ -401,7 +410,7 @@ module z80_core #(
   assign bc_x      = {(do_enter && (`UF(uw_ent, EOP) == EOP_DEC_B)) ? b_dec : rB,
                       rC};
   assign act_valid = !in_exec || nx_go;
-  assign ent_go    = nx_ok(`UF(uw_ent, NX), blk_more_c);
+  always_comb ent_go = nx_ok(`UF(uw_ent, NX), blk_more_c);   // and here, same reason
   assign chained   = (`UF(uw_ent, BUS) == BUS_NONE) && ent_go;
   assign run_upc   = chained ? (ent_upc + 1'b1) : ent_upc;
 

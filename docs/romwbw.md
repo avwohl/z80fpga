@@ -39,11 +39,11 @@ The build is [boards/nexys_a7_100t/romwbw](../boards/nexys_a7_100t/romwbw/README
 `make romwbw` gets to the loader prompt without any hardware:
 
 ```
-RomWBW HBIOS v3.5.1, 2025-05-21
+RomWBW HBIOS v3.6.0, 2026-03-28
 
 RetroBrew SBC [SBC_simh_std] Z80 @ 8.000MHz
 0 MEM W/S, 1 I/O W/S, INT MODE 1, SBC MMU
-512KB ROM, 512KB RAM, HEAP=0x5961
+512KB ROM, 512KB RAM, HEAP=0x5D4D
 ROM VERIFY: 00 00 00 00 PASS
 
 SSER: IO=0x6D
@@ -53,9 +53,9 @@ HDSK: DEVICES=2
 
 Unit        Device      Type              Capacity/Mode
 ----------  ----------  ----------------  --------------------
-Char 0      EF0:        RS-232            9600,8,N,1
+Char 0      SSER0:      RS-232            9600,8,N,1
 Disk 0      MD0:        RAM Disk          256KB,LBA
-Disk 1      MD1:        ROM Disk          --
+Disk 1      MD1:        ROM Disk          384KB,LBA
 Disk 2      HDSK0:      Hard Disk         1024MB,LBA
 Disk 3      HDSK1:      Hard Disk         1024MB,LBA
 
@@ -65,8 +65,13 @@ Boot [H=Help]:
 ```
 
 That is HBIOS initialising, verifying its own ROM, finding the console,
-enumerating devices and handing off to the loader — 738 characters, every one
+enumerating devices and handing off to the loader — 745 characters, every one
 of them shifted out of the real UART a bit at a time.
+
+That capture is RomWBW 3.6.0, which is what `make romwbw ROMWBW_VERSION=3.6.0`
+gives you. One line of it used to read `MD1: ROM Disk --`, and chasing why the
+board disagreed found a bug in the simulation rather than in the design — "What
+works, and what does not yet" has it.
 
 ## Doing it
 
@@ -169,7 +174,11 @@ image asks for 16 RAM banks and 16 ROM banks (offsets 0x10B and 0x10C), with
 `BIDCOM` 0x8F, and the MMU already answers that when `RAM_BANKS = 16`.
 
 The simulation carries the whole 512 KB — the same `ROM_BANKS = 16` and the
-same hex the Nexys build uses — so every bank HBIOS expects is there.
+same 512 KB shape, out of the same `tools/mkromhex.py --size 524288` — so
+every bank HBIOS expects is there. It is not the same *file* as the board's:
+`sim/romwbw512k.hex` is whatever `make romwbw` last built, and
+`boards/nexys_a7_100t/romwbw/romwbw512k.hex` is whatever was put there by hand.
+To compare a capture against the board's, pass the board's release.
 
 It used to load only the first 64 KB, HBIOS in bank 0 and the loader in bank 1,
 on the reasoning that this is what fits in block RAM beside 512 KB of RAM. But
@@ -178,22 +187,38 @@ more than it saved. 3.6.0 moved the device inventory out of bank 0: its text
 sits at ROM offset 0x01aa14, in bank 3, where 3.5.1 had it at 0x001df4. With a
 64 KB window HBIOS called into 0xFF there and never came back to the loader, so
 3.5.1 reached the prompt and 3.6.0 did not, for no better reason than where a
-string had moved. Both reach it now. The run costs about three minutes instead
-of eighty seconds, which is the whole of the price.
+string had moved. Both reach it now, and it costs almost nothing: the prompt
+arrives at the same simulated time, 7845705500000 ps, and the larger image adds
+about a quarter of a second of `$readmemh` and some 17 MB of peak memory. The
+wall-clock figure depends on the machine, not on this change.
 
 Hardware was never affected, and that is measured rather than assumed: a Nexys
 bitstream carrying the 3.6.0 image was built and run on 2026-09-22, closing
 timing at WNS +0.562 ns and reaching `Boot [H=Help]:` on the board, because all
 16 banks are in block RAM there.
 
-One difference between a simulated capture and a real one is *not* explained
-here. On hardware the inventory reads `MD1: ROM Disk 384KB,LBA`; in simulation
-the same image at the same `ROM_BANKS` reads `--`, and did so at 64 KB too, for
-both releases. It is not the ROM's contents — the bank-3 code printing that
-very table is proof the upper banks read correctly — and nothing here depends
-on it, so it has been left alone. A cosmetic difference that does matter when
-comparing captures: 3.6.0 names the console `SSER0:` where 3.5.1 called it
-`EF0:`.
+A simulated capture used to differ from a real one in one line, and chasing it
+found a real bug — in the simulation, not in the design. On hardware the
+inventory read `MD1: ROM Disk 384KB,LBA`; under Icarus it read `--`. The cause
+is `z80_core.sv`'s `nx_go`: `nx_ok` calls `cond`, which reads `rF` and `ir_x`,
+and neither is an argument. Icarus builds a continuous assignment's sensitivity
+list from the call's arguments alone, so `assign nx_go = nx_ok(...)` was
+recomputed only when the NX field changed. A `JR cc` or `RET cc` landing on the
+same micro-op address as a preceding not-taken one reused that decision
+whatever the flags now said. RomWBW's `MD_CAP` is exactly that shape —
+`OR A / JR Z / DEC A / JR Z` — so the second branch never fired and the
+capacity query returned an error, which HBIOS prints as `--`.
+
+Every other tool puts `rF` in the cone, so the hardware was always right; this
+was Icarus reading a legal continuous assignment too narrowly. `make test-full`
+could not catch it either, because SingleStepTests runs one instruction per
+vector, so `upc` always moves between vectors and the stale value is always
+refreshed. Both assignments are `always_comb` now, and the simulation prints
+`384KB,LBA`. If you are hunting something similar, the shape to distrust is a
+continuous assignment calling a function that reads state it was not passed.
+
+One difference that remains, and is only cosmetic: 3.6.0 names the console
+`SSER0:` where 3.5.1 called it `EF0:`.
 
 On hardware both halves fit, but not in the same place. 512 KB of ROM is 128
 of the part's 135 RAMB36 tiles, which leaves nothing for the RAM, so the RAM
@@ -208,6 +233,9 @@ holds `wait_n` low until its AXI transaction finishes, and the core freezes
 correct; there is a one-line read cache anyway, because instruction fetch is
 sequential and it turns sixteen DDR2 reads into one.
 
-What is still missing is a disk. `HDSK0:`/`HDSK1:` are advertised but nothing
-is behind them, so `C:` through `J:` are not real. The board has a microSD
-slot and RomWBW knows how to use one; that is the next piece.
+`HDSK0:`/`HDSK1:` are real. `rtl/soc/hdsk.sv` is the SIMH AltairZ80 controller
+on port `0xFD`, backed by the microSD card through `rtl/soc/sd_spi.sv`, and
+reads and writes both work on hardware from CP/M.
+[boards/nexys_a7_100t/romwbw/README.md](../boards/nexys_a7_100t/romwbw/README.md)
+has the card-preparation sequence, the wait-state bug that made writes fail,
+and what the failure codes mean.

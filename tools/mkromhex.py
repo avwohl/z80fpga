@@ -64,6 +64,13 @@ def main() -> int:
                     help="fail unless the input hashes to this")
     args = ap.parse_args()
 
+    if args.per_line < 1:
+        ap.error("--per-line has to be at least 1")
+    if args.offset < 0:
+        ap.error("--offset cannot be negative")
+    if args.size is not None and args.size < 0:
+        ap.error("--size cannot be negative")
+
     with open(args.binary, "rb") as f:
         data = f.read()
 
@@ -86,16 +93,26 @@ def main() -> int:
 
     # Same image, same options, hex already there: leave it, mtime and all.
     # What the hex was made from is a hash, never a timestamp.
+    # The note has to describe the output as well as the input, or a truncated
+    # or hand-edited hex is reused while its sidecar swears it is something
+    # else -- and that sidecar is what build_romwbw.tcl echoes into a build log.
     keys = ("source_sha256", "offset", "size", "per_line")
     try:
         with open(args.hexfile + ".provenance.json", encoding="utf-8") as f:
             was = json.load(f)
     except (OSError, ValueError):
         was = None
-    if (isinstance(was, dict) and os.path.exists(args.hexfile)
-            and all(was.get(k) == record[k] for k in keys)):
-        print(f"{args.hexfile} is already that image, untouched", file=sys.stderr)
-        return 0
+    if isinstance(was, dict) and all(was.get(k) == record[k] for k in keys):
+        try:
+            with open(args.hexfile, "rb") as f:
+                on_disk = f.read()
+        except OSError:
+            on_disk = None
+        if (on_disk is not None and was.get("hex_bytes") == len(on_disk)
+                and was.get("hex_sha256") == hashlib.sha256(on_disk).hexdigest()):
+            print(f"{args.hexfile} is already that image, untouched",
+                  file=sys.stderr)
+            return 0
 
     if args.offset:
         data = data[args.offset:]
@@ -110,11 +127,19 @@ def main() -> int:
                   f"with 0xFF", file=sys.stderr)
             data = data + b"\xff" * (args.size - len(data))
 
-    with open(args.hexfile, "w", newline="\n") as f:
-        for i in range(0, len(data), args.per_line):
-            f.write(" ".join(f"{b:02x}" for b in data[i:i + args.per_line]) + "\n")
+    # Through a .partial, the way tools/romwbw_fetch.py writes the ROM: an
+    # interrupted run must not leave half a hex under the real name.
+    text = "".join(" ".join(f"{b:02x}" for b in data[i:i + args.per_line]) + "\n"
+                   for i in range(0, len(data), args.per_line))
+    part = args.hexfile + ".partial"
+    with open(part, "w", newline="\n") as f:
+        f.write(text)
+    os.replace(part, args.hexfile)
 
+    blob = text.encode("ascii")
     record["bytes"] = len(data)
+    record["hex_bytes"] = len(blob)
+    record["hex_sha256"] = hashlib.sha256(blob).hexdigest()
     with open(args.hexfile + ".provenance.json", "w", newline="\n") as f:
         json.dump(record, f, indent=2, sort_keys=True)
         f.write("\n")

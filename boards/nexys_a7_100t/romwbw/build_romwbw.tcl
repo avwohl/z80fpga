@@ -20,16 +20,27 @@ if {![file exists $here/romwbw512k.hex]} {
 # Which ROM this bitstream will carry, if tools/mkromhex.py left its note
 # beside the hex.  An echo into the build log, never a gate: a hand-built hex
 # has no note and still builds.
+# Since the simulation's hex is now also called romwbw512k.hex and is also
+# 512 KB, a note copied from the wrong place would look entirely plausible.
+# So check it describes the file beside it before repeating it as fact.
 set note $here/romwbw512k.hex.provenance.json
 if {[file exists $note]} {
     set fh [open $note r]
     set j [read $fh]
     close $fh
-    if {[regexp {"romwbw_version"\s*:\s*"([^"]*)"} $j -> ver]} {
-        puts "romwbw512k.hex is RomWBW $ver"
+    set fits 1
+    if {[regexp {"hex_bytes"\s*:\s*([0-9]+)} $j -> nb]} {
+        if {$nb != [file size $here/romwbw512k.hex]} { set fits 0 }
     }
-    if {[regexp {"source_sha256"\s*:\s*"([^"]*)"} $j -> sha]} {
-        puts "romwbw512k.hex is from an image hashing $sha"
+    if {!$fits} {
+        puts "romwbw512k.hex.provenance.json describes some other file - ignored"
+    } else {
+        if {[regexp {"romwbw_version"\s*:\s*"([^"]*)"} $j -> ver]} {
+            puts "romwbw512k.hex is RomWBW $ver"
+        }
+        if {[regexp {"source_sha256"\s*:\s*"([^"]*)"} $j -> sha]} {
+            puts "romwbw512k.hex is from an image hashing $sha"
+        }
     }
 }
 
