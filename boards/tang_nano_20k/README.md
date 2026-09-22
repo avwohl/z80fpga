@@ -163,12 +163,27 @@ while **every** access to data memory failed, which reads like a broken block
 RAM and is not one. With `CPU_DIV = 1` a throwaway image that stores `0A5h`
 at `0FFF0h` and reads it back returned the right nibble 8904 times running.
 
-What is left is the bank check. The banner prints and then the monitor
-restarts, looping on the banner for ever. `sw/boot.z80` copies its bank
-checker into the common bank with `LDIR` and does `call 08000h` -- a block
-copy, then instruction fetch out of RAM, neither of which the passing tests
-cover. A test for exactly that was built and never got a clean run before the
-USB link dropped again, so it is the next thing to try.
+What is left is the bank check, and it is narrowed a long way. The banner
+prints and then the monitor restarts, looping on the banner -- about 270 times
+a second, which is a crash running through the mirrored ROM and wrapping to
+zero, not a USB dropout. Two throwaway images reported on the LEDs rather than
+the console, because the serial channel on this board dies while JTAG stays
+up, and between them they cleared both prime suspects: **`LDIR` completes and
+`CALL 08000h` executes out of RAM and returns.**
+
+So the remaining suspect is the one path nothing else exercises: the MMU's
+`cur_bank` register through `phys_addr` into the block RAM's address pins,
+which only the bank check drives. The board now halves its 27 MHz through a
+`BUFG` and runs the Z80 at 13.5 MHz with `CPU_DIV = 1`, which is the Icepi
+Zero's arrangement and roughly doubles the margin on that path. **This is a
+hypothesis, not a measurement**: it was not confirmed on hardware because the
+serial link went down and only a physical replug has ever brought it back.
+The bitstream on the board is that build.
+
+Note what nextpnr reports: `Max frequency for clock 'clk_sys': 38.64 MHz (PASS
+at 27.00 MHz)`. It does not know `clk_sys` is half of `clk`, exactly as
+CLAUDE.md records for the Icepi -- so the real margin against 13.5 MHz is
+2.9x, and the constraint is stricter than the hardware, not looser.
 
 The bisection that got here, before the `CPU_DIV` fix was found:
 
