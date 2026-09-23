@@ -170,6 +170,20 @@ beacon.fs: beacon.sv $(ROOT)/rtl/soc/uart.sv $(CST)
 beacon: beacon.fs
 	openFPGALoader -b tangnano20k --freq $(JTAG_FREQ) $<
 
+# `make loopback` is the same question asked the other way, and it is the
+# shorter one: the whole design is `assign uart_tx = uart_rx;`.  Send bytes
+# at the console port and they come back, or the link is dead -- and since
+# there is no logic in the design at all, nothing about this repository can
+# be the reason they do not.  Between this and `make beacon` the two
+# directions are covered with no CPU in either.
+loopback.fs: loopback.sv $(CST)
+	yosys -p "read_verilog -sv loopback.sv; 	          synth_gowin -family $(SYNFAM) -top $(TOP) -json loopback.json" 	      -l loopback_yosys.log
+	nextpnr-himbaechel --device $(DEVICE) --vopt family=$(FAMILY) 	                   --vopt cst=$(CST) --json loopback.json 	                   --write loopback_pnr.json --freq $(FREQ) -l loopback_pnr.log
+	gowin_pack -d $(FAMILY) -o $@ loopback_pnr.json
+
+loopback: loopback.fs
+	openFPGALoader -b tangnano20k --freq $(JTAG_FREQ) $<
+
 # -f is --write-flash.  Without it openFPGALoader writes SRAM, which is the
 # default and is gone at power down.  Plain -f is what this part wants: the
 # GW2AR has no internal flash, so there is nothing for --external-flash to
@@ -225,6 +239,7 @@ clean:
 	rm -f ledchk.json ledchk_pnr.json ledchk.fs ledchk.hex ledchk_top.sv
 	rm -f gatesim.v gatesim_cells.v gatesim.vvp
 	rm -f beacon.json beacon_pnr.json beacon.fs
+	rm -f loopback.json loopback_pnr.json loopback.fs
 
 # nextpnr writes the post-route netlist even when timing fails, and then exits
 # 1.  Without this, the next make would find a newer _pnr.json than .json,
@@ -232,4 +247,4 @@ clean:
 # without a word.
 .DELETE_ON_ERROR:
 
-.PHONY: all prog flash ledchk beacon gatesim stat timing clean
+.PHONY: all prog flash ledchk beacon loopback gatesim stat timing clean

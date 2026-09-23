@@ -447,10 +447,18 @@ and `rtl/soc/uart.sv`. The identical construction earlier in this bring-up
 delivered exactly its designed rate, 258 bytes in 25 s. It now delivers
 **zero bytes in 12 seconds**, where a live channel would give about 1240.
 
-So the bridge is dead as a hardware matter and no change to this repository
-can revive it. Run `make beacon` before believing anything a silent console
-seems to say about the design: it separates a broken link from a broken
-build, which is a distinction most of a day went into re-learning.
+`make loopback` asks the same question the other way and is the shorter one:
+the whole design is `assign uart_tx = uart_rx;`. Eight bytes sent at the
+console port come back as **none**, with CTS, DSR and CD all false. There is
+no logic in that design at all, so nothing in this repository can be the
+reason.
+
+So the bridge is dead as a hardware matter, in both directions, and no change
+to this repository can revive it. Run one of those two before believing
+anything a silent console seems to say about the design: they separate a
+broken link from a broken build, which is a distinction most of a day went
+into re-learning. `loopback` is the one to reach for first -- it is ten lines
+and it covers both directions at once.
 
 JTAG is meanwhile perfectly healthy -- `idcode 0x81b`, `GW2A(R)-18(C)`, and
 `openFPGALoader` reports `DONE` on every load. COM7 enumerates, opens without

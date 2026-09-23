@@ -34,6 +34,8 @@ boards/*/gatesim_cells.v
 boards/*/gatesim.vvp
 boards/*/beacon.json
 boards/*/beacon_pnr.json
+boards/*/loopback.json
+boards/*/loopback_pnr.json
 boards/*/*/*.json
 boards/*/*/*.bit
 boards/*/*/*.config
