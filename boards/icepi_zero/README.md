@@ -272,12 +272,25 @@ that holds DTR asserted does not hold the machine in reset, and .NET's
 SerialPort leaves `DtrEnable` false on open, so merely opening the port does
 nothing.
 
-That much is **built and timing-clean but not yet exercised on hardware**:
-loading it needs JTAG, JTAG needs the WinUSB binding, and putting that binding
-back needs Zadig -- `pnputil /add-driver ... /install` will not do it, because
-FTDI's signed package outranks libwdi's and pnputil has no force. Reverting is
-scriptable (`pnputil /remove-device` then `/scan-devices`); only the outbound
-direction needs the GUI.
+**Verified on hardware.** With the design in flash and nobody touching the
+board, asserting DTR for 150 ms produced:
+
+```
+z80fpga ready
+banked memory ok
+>
+```
+
+So the banner is reachable from a script now, and the underside buttons are
+optional rather than required.
+
+One asymmetry worth knowing, because it decides what a remote session can do
+alone: going *to* WinUSB needs Zadig, but coming *back* is scriptable.
+`pnputil /add-driver <oem>.inf /install` will not rebind, because FTDI's
+signed package outranks libwdi's and pnputil has no force option; whereas
+`pnputil /remove-device` followed by `/scan-devices` reliably restores the
+FTDI driver and the COM port. So a session can always recover a console by
+itself, but cannot give itself the programmer back.
 
 **Still bitstream-only:** the SDRAM and RomWBW variants.
 
