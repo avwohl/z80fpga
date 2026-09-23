@@ -478,15 +478,47 @@ noting that FT_PROG needs FTDI's own D2XX driver on interface 0, which Zadig
 has replaced with WinUSB, so that has to be put back first. Re-flashing a
 BL616 is not the procedure for this part.
 
-Reading that EEPROM from a script here does not work, which is worth knowing
-before spending an hour on it. `pyftdi` over the OSS CAD Suite's own
-`libusb-1.0.dll` enumerates the device and reads its string descriptors --
-serial `2025030317`, product `USB Debugger` -- but the FTDI vendor request
-for an EEPROM word (`bmRequestType 0xC0`, `bRequest 0x90`) returns `0xFFFF`
-for every address, including word 1, which must read `0403`. Claiming the
-interface and setting the configuration change nothing. Windows is not
-passing the vendor transfer through, so the read is not blank silicon, it is
-no answer at all. FT_PROG with the D2XX driver is the way to look.
+**That EEPROM reads as not programmed, and that is very likely the whole
+story.** Read through FTDI's own `ftd2xx.dll`, which is already bound to the
+console interface, so no driver had to be disturbed:
+
+- `FT_OpenEx("2025030317B")` succeeds, and `FT_GetDeviceInfo` returns what
+  the device enumerated as: type 4 (FT2232C), id `04036010`, serial
+  `2025030317B`, description `USB Debugger B`.
+- `FT_EE_Read` returns **15, `FT_EEPROM_NOT_PROGRAMMED`**.
+- `FT_ReadEE` returns `FT_OK` for every address and hands back `0xFFFF`
+  each time -- including word 1, which must read `0403`, and word 2, which
+  must read `6010`.
+- `FT_EE_UASize` returns a user area of 0.
+
+Those two things cannot both be true of a healthy board. The descriptors the
+device is enumerated with -- a Sipeed date-coded serial and a custom product
+string -- can only have come from that EEPROM when it was plugged in. It now
+reads blank. So the EEPROM has lost its contents since enumeration, and the
+chip has been running on what the host cached.
+
+That fits everything else in this file. The USB history recorded below is a
+device that enumerated, failed with Code 43, recovered on a replug, worked,
+went silent while Windows still called it healthy, and then vanished from USB
+with nothing logged -- which is what a failing configuration EEPROM looks
+like. It fits JTAG surviving while the console did not: MPSSE works from
+defaults, while which channel is a UART and whether it is a VCP are EEPROM
+settings. And it explains why nothing in this repository and nothing on the
+host could touch it.
+
+**The repair is FT_PROG**, writing the configuration back -- VID 0403,
+PID 6010 so `openFPGALoader -b tangnano20k` still matches, channel A for
+JTAG and channel B as a VCP UART. It needs FTDI's D2XX driver on interface
+0, which Zadig replaced with WinUSB, so that has to be put back first. If
+the EEPROM will not take a write, the part is gone and the board needs
+replacing. Note what is being risked: JTAG is the one channel that still
+works, and a bad write can take it too, so this is a deliberate step and not
+a thing to try casually.
+
+(For completeness, `pyftdi` over the suite's `libusb-1.0.dll` gives the same
+`0xFFFF` for every word, but through WinUSB that could also have been Windows
+refusing to pass the vendor transfer. D2XX is FTDI's own path and returns
+`FT_OK`, which is what makes the reading trustworthy.)
 
 **Its serial channel has failed, and that is now proved rather than
 inferred.** `make beacon` builds a console beacon with no Z80 in it -- a
