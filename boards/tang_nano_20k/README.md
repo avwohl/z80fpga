@@ -443,14 +443,22 @@ Tried against the reproducer and no help:
   access.  Reverted; it is not the bank mux settling.
 
 So it is not the instruction, not the value, not the window and not the
-sequence: it is where the code sits. That is the shape of a marginal path,
-not a logic error, which fits everything else -- the netlist runs the whole
-monitor correctly in `make gatesim`, and nextpnr does no hold analysis on
-this family at all.
+sequence: it is where the code sits. A prober that survives at `8000h` dies
+at `8100h`, unchanged in every other respect.
 
-`MEM_WAIT = 1` does not change it, so it is not the memory path wanting more
-time. Neither did halving the clock, recorded earlier. Both of those argue
-against a setup problem and leave hold, which nothing in this flow can see.
+**It is not marginal timing, and that is measured rather than argued.**
+Three independent placements -- `nextpnr --seed 1`, `2` and `3`, reporting
+38.15, 39.03 and 41.71 MHz against a 27 MHz target -- produce **byte
+identical** failure: `z80fpga ready`, then `B0h`, then the prompt, every
+time. A hold violation moves when the placement moves. This does not budge
+across 3.5 MHz of Fmax.
+
+That inverts what this section said first. It is deterministic and
+structural, which means it is findable -- and it means the gate-level
+simulation is missing something real about the hardware, rather than the
+silicon being flaky. `MEM_WAIT = 1` does not change it either, nor does a
+settling cycle holding `wait_n` low for the clock after any bank-port write.
+
 
 `sw/diag.z80` is in the tree because the next person needs the harness more
 than the conclusion: build it over `top.sv` with `ROM_INIT` pointed at it,
