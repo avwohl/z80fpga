@@ -190,3 +190,23 @@ stuck on.
 It writes a sector as well as reading one. The HDSK units sit below
 LBA 0x400000, clear of the ROM image, but do not point it at a card whose
 contents matter.
+
+### With the image on the card: still silent, cause not established
+
+The RomWBW image was written to LBA 0x400000 of the 16 GB card and verified by
+reading it back off the card -- 524288 bytes, byte identical, and the same
+sha256 as the image the Nexys boots. With that card in the slot the board was
+reset over DTR and listened to for 45 s: nothing.
+
+That is **not** yet evidence of a fault. What has not been done is watching
+the lamps at the same time, which is the only thing that separates "never
+staged" from "staged and running". `sw/boot.z80`'s equivalent question was
+settled that way in an afternoon; this one needs somebody to look.
+
+In simulation the same image staged off a card model is byte-perfect in the
+chip, and whether it then boots is still running -- HBIOS walks banks to size
+memory for about 2.05 seconds of simulated time before it writes its first
+character, which is hours of wall clock in iverilog. An earlier run of that
+bench gave up after 128 ms and reported a silent image, which looked exactly
+like a loader bug and was not one. Do not read a short simulation as a
+verdict here.
