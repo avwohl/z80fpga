@@ -1,41 +1,47 @@
-; Does LDIR into the common bank work in this build, and does code there run?
+; Clean baseline, fresh flash region, nothing carried over.
 ;
-; The instrument is now proved: three markers from a ROM-only program all
-; come back.  And a bare probe at 8000h -- no banking anywhere in it -- does
-; not.  So either the copy does not land or the code there does not run.
-; This asks, entirely from ROM, which has never failed.
+; F1 and F2 come from ROM, before anything else, so they prove the channel
+; is alive in this very run -- a silence after them means something, and a
+; silence instead of them means the instrument.
 ;
-;   F5, F1  8000h and 8001h read back 3Eh and F1h: the copy landed, so it is
-;           execution in the common bank that fails
-;   other   the copy did not land
+;   F1  running, from ROM
+;   F2  still running, from ROM
+;   F3  a bare probe in the common bank ran      (no banking in it at all)
+;   F4  that probe returned
+;   F5  a probe that does a bank switch reached its next instruction
+;   F6  that probe returned
 
 LED      equ 0FFh
+BANK_RAM equ 078h
+BANK_ROM equ 07Ch
+RAM_BASE equ 080h
 
          org 0000h
 
 start:   di
          ld sp,0FFF0h
+         ld a,0F1h
+         out (LED),a
+         call bigdel
+         ld a,0F2h
+         out (LED),a
+         call bigdel
 
-         ld hl,pa_s
+         ld hl,pa_s             ; probe A: no banking anywhere in it
          ld de,08000h
          ld bc,pa_e-pa_s
          ldir
-
-         ld a,(08000h)          ; want 3Eh -> nibble E
-         and 00Fh
-         or 0F0h
+         call 08000h            ; emits F3
+         ld a,0F4h
          out (LED),a
          call bigdel
 
-         ld a,(08001h)          ; want F1h -> nibble 1
-         and 00Fh
-         or 0F0h
-         out (LED),a
-         call bigdel
-
-         ld a,(08004h)          ; want C9h -> nibble 9
-         and 00Fh
-         or 0F0h
+         ld hl,pb_s             ; probe B: with a bank switch
+         ld de,08000h
+         ld bc,pb_e-pb_s
+         ldir
+         call 08000h            ; emits F5
+         ld a,0F6h
          out (LED),a
 hang:    jr hang
 
@@ -50,7 +56,16 @@ bd2:     dec de
          djnz bd1
          ret
 
-pa_s:    ld a,0F1h              ; 3E F1
-         out (LED),a            ; D3 FF
-         ret                    ; C9
+pa_s:    ld a,0F3h
+         out (LED),a
+         ret
 pa_e:
+
+pb_s:    ld a,RAM_BASE
+         out (BANK_RAM),a
+         ld a,0F5h
+         out (LED),a
+         xor a
+         out (BANK_ROM),a
+         ret
+pb_e:

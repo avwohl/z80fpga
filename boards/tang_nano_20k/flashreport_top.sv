@@ -26,7 +26,11 @@
 // counter below is what boards/icepi_zero and boards/c0_microsd both do, and
 // S1 already power-cycles the configuration if a reset is wanted.
 
-module top (
+module top #(
+    // Each run wants a clean region: a page program only clears bits, so
+    // markers from a previous run are still there and read as this one's.
+    parameter logic [7:0] FLASH_PAGE = 8'h7F
+) (
     input  logic       clk,           // 27 MHz, pin 4
     output logic [5:0] led,           // active low
     output logic       mspi_clk,      // the configuration flash, handed to
@@ -143,7 +147,7 @@ module top (
 
   flash_wr u_fw (
       .clk (clk), .rst_n (rst_n), .start (fw_go),
-      .addr ({8'h7F, fw_n, 12'h000}), .data ({4'hF, fw_n}),
+      .addr ({FLASH_PAGE, fw_n, 12'h000}), .data ({4'hF, fw_n}),
       .cs_n (mspi_cs_n), .sclk (mspi_clk), .mosi (mspi_mosi), .busy (fw_busy)
   );
 endmodule

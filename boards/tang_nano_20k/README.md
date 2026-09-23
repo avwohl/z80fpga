@@ -639,6 +639,32 @@ machine.  Anything that matters should be re-measured inside one build
 before it is believed, and the flash build is the one to use, because it
 needs nobody watching.
 
+**Retraction, and it takes most of the bank-switch work with it.**  A clean
+run -- fresh flash region, `FLASH_PAGE` moved to `7Eh`, the channel proved
+alive in the same run by two markers emitted from ROM first -- says this:
+
+```
+  F1  running, from ROM                            YES
+  F2  still running, from ROM                      YES
+  F3  a bare probe in the common bank RAN          no
+```
+
+A probe at `8000h` with **no banking in it at all** does not run.  And the
+copy is good: read back from ROM, `8000h` holds `3Eh` and `8004h` holds
+`C9h`, byte for byte.
+
+So in this build the machine cannot execute from the common bank, full stop.
+Every probe in the bank-switch bisection was called into code that never
+ran, which means **the "RAM-to-RAM switch kills it" reproducer and the
+eight-byte cliff were both artifacts** and are withdrawn.  What was really
+being measured was a `call` into a region that does not execute.
+
+That also sharpens the two-bitstream problem rather than resolving it: the
+console build demonstrably *did* run code at `8000h` and return from it --
+that is how `CALL 08000h` was cleared early on.  The flash build does not.
+The difference between them is `flash_wr`, three MSPI pins and
+`--mspi_as_gpio`, and which of those matters is not known.
+
 **Two traps in the instrument itself, both learned the hard way.**
 
 The flash pages are **not erased between runs**.  A page program only clears
