@@ -38,7 +38,14 @@ z80_ucode.mem: $(ROOT)/rtl/core/z80_ucode.mem
 z80_dispatch.mem: $(ROOT)/rtl/core/z80_dispatch.mem
 	cp $< $@
 
-boot.hex: $(ROOT)/sw/boot.z80
+# The SoC here has 16 RAM banks where the shared monitor assumes 2, and a bank
+# check that walks two of sixteen would call 64 KB of a 512 KB window "banked
+# memory ok".  Retarget RAM_N on the way in rather than forking the monitor.
+boot16.z80: $(ROOT)/sw/boot.z80
+	sed 's/^RAM_N    equ 2 /RAM_N    equ 16 /' $< > $@
+	@grep -q "^RAM_N    equ 16" $@ || { echo "RAM_N was not retargeted - has sw/boot.z80 changed?"; exit 1; }
+
+boot.hex: boot16.z80
 	python $(ROOT)/tools/zasm.py $< -o $@ --size 32768
 
 z80fpga.json: $(SRC) $(MEMS)
@@ -77,7 +84,7 @@ timing: z80fpga.config
 	@grep -E "constraining clock net|Max frequency|Max delay" nextpnr.log
 
 clean:
-	rm -f z80fpga.json z80fpga.config z80fpga.bit *.log $(MEMS)
+	rm -f z80fpga.json z80fpga.config z80fpga.bit *.log $(MEMS) boot16.z80
 
 # nextpnr writes the textcfg even when timing fails, and then exits 1.  Without
 # this, the next make would find a newer .config than .json, skip nextpnr

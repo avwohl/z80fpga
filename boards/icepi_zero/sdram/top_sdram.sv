@@ -32,6 +32,7 @@ module top_sdram (
     output logic  [4:0] led,
     output logic        usb_tx,       // FPGA -> FTDI
     input  logic        usb_rx,       // FTDI -> FPGA
+    input  logic        usb_dtrn,     // FTDI DTR, low = asserted; resets
 
     output logic [12:0] sdram_a,
     inout  wire  [15:0] sdram_dq,
@@ -62,18 +63,27 @@ module top_sdram (
   );
 
   // ------------------------------------------------------------- the reset
-  logic [1:0] btn0_sync, btn1_sync;
+  // The console's DTR line resets too, so a session at the far end of a wire
+  // can make the banner appear without reaching the underside of the board.
+  // An edge, not a level: a terminal holding DTR asserted would otherwise
+  // hold the machine in reset.  See ../README.md.
+  logic [1:0] btn0_sync, btn1_sync, dtr_sync;
+  logic       dtr_prev;
   logic [7:0] rstcnt = 8'h00;
   logic       rst_n;
 
   always_ff @(posedge clk_sys) begin
     btn0_sync <= {btn0_sync[0], button[0]};
+    dtr_sync  <= {dtr_sync[0],  usb_dtrn};
+    dtr_prev  <= dtr_sync[1];
     btn1_sync <= {btn1_sync[0], button[1]};
   end
 
+  wire dtr_reset = dtr_prev && !dtr_sync[1];
+
   always_ff @(posedge clk_sys) begin
-    if (!btn0_sync[1])   rstcnt <= 8'h00;
-    else if (!rstcnt[7]) rstcnt <= rstcnt + 8'd1;
+    if (!btn0_sync[1] || dtr_reset) rstcnt <= 8'h00;
+    else if (!rstcnt[7])            rstcnt <= rstcnt + 8'd1;
   end
 
   assign rst_n = rstcnt[7];
