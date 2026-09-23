@@ -459,6 +459,23 @@ simulation is missing something real about the hardware, rather than the
 silicon being flaky. `MEM_WAIT = 1` does not change it either, nor does a
 settling cycle holding `wait_n` low for the clock after any bank-port write.
 
+**A bad block RAM is ruled out by the same experiment, once you check that
+the seeds actually moved the block RAMs.** They do: between seed 1 and
+seed 3, **35 of the 37 `SP` cells land on different sites** --
+`u_ram.mem.0.9` goes from `X25Y9` to `X13Y9`, and the ROM's blocks move
+too. If one physical block were faulty the symptom would move with them.
+It does not budge.
+
+So: not the netlist, which simulates correctly; not the placement; not a
+bad block; not marginal timing. What is left is what the bitstream tells
+those blocks to *be*. The 64 KB of RAM is 32 blocks at **`BIT_WIDTH = 1`**,
+16384x1 each, which is an unusual configuration and the only one in this
+design -- the 8 KB ROM is `BIT_WIDTH = 2` and works, and the dispatch table
+is the x9 mode and works. If `gowin_pack` mis-programs the x1 width, the
+address mapping inside those blocks is wrong and some addresses alias,
+which is exactly the shape of what the board does. `sw/ramtest.z80` is the
+test for it, and it walks `8000h + 2^12 = 9000h` among the rest.
+
 
 One lead is worth writing down because it needs no banking to chase. The
 write that dies is to `9002h`; `8002h` is where the prober's own `xor a`
