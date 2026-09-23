@@ -118,6 +118,15 @@ dw1:     sla c
 done:    ld hl,m_end
          call puts
 
+; ---- say it once as F0h|verdict, which the board top turns into a flash
+;      write, so a host can read the answer back over JTAG
+         ld a,(blinks)
+         or 0F0h
+         out (LED),a
+         ld b,0
+fwwait:  call delay             ; give the flash writer time to finish
+         djnz fwwait
+
 ; ---- and say it again, forever, by blinking, which needs no decoding
 ;      1 blink  everything passed
 ;      2 blinks an address line is bad

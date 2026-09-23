@@ -539,6 +539,68 @@ and it prints. The survive-your-own-crash trick -- a flag and a progress byte
 in the common bank, checked on entry -- is what makes a fault that kills the
 CPU measurable at all.
 
+## Reading it without a console, or eyes: the flash as a return channel
+
+The console dies and stays dead, and LEDs need a person.  What the board
+still has is the flash it configures from.  `gowin_pack --mspi_as_gpio` hands
+those pins to user logic after configuration, and `openFPGALoader
+--dump-flash` reads them back, so **a byte written there comes off the board
+over JTAG**.  That closes the loop with no console and nobody looking.
+
+`rtl/soc/flash_wr.sv` is the writer, and it is deliberately small: Page
+Program only, no erase command anywhere in it, a parameterised address that
+defaults to `7F0000h` -- well past the 7.3 MB bitstream, and erased on this
+board -- and no status polling, just a fixed wait longer than any page
+program.  The worst it can do is clear bits in one page it was pointed at.
+
+`boards/tang_nano_20k/flashreport_top.sv` and `flashreport.cst` wire it up.
+The trigger needs no change to the SoC: a Z80 program writes `F0h|answer` to
+the LED port at `0FFh`, the top spots the `F` nibble, latches it once and
+programs that byte.  Build it with `--mspi_as_gpio`, load, wait a few
+seconds, then
+
+```
+openFPGALoader -b tangnano20k --dump-flash --file-size 16 -o 8323072 out.bin
+```
+
+Two things make it usable rather than clever.  Each run wants a **fresh
+address** -- a page program can only clear bits, so re-using one ANDs the new
+answer into the old.  And `out (0FFh),a` is an **I/O** write: it touches no
+memory at all, which makes it the only marker that can be trusted when
+memory is what is under suspicion.
+
+### What it found
+
+- **Memory decode is fine.**  `sw/ramtest.z80` -- walking ones on the common
+  bank's address lines, then its data lines -- reports **1**, both passed, on
+  the board.  That retires the address-aliasing idea for good.
+- **The bank-select `OUT` survives**, and so does a high-window write taken
+  straight after it, and so does a low-window write, and so does a
+  high-window read.  Every step in isolation is fine.
+- **The write loop does not survive**, and bisecting it gives a
+  two-instruction reproducer with no memory write in it at all:
+
+```
+    out (78h), 80h      ; ROM -> RAM bank 0        fine
+    out (78h), 81h      ; RAM bank 0 -> RAM bank 1 DIES
+```
+
+Every earlier probe put ROM back before doing anything else, so a
+**RAM-to-RAM** bank switch had never been tested.  It is the one thing
+`sw/boot.z80`'s loop does that no single-shot probe did.
+
+That transition flips `cur_bank[0]`, which is `phys[15]`, which is the block
+RAM's group select -- and the next instruction fetch comes out of that RAM.
+A short `cur_bank -> mux -> AD` path changing on the same edge the block RAM
+latches its address is what a hold race looks like, and nextpnr does no hold
+analysis on this family.  It also explains why the netlist simulates
+correctly: nothing about it is wrong.
+
+Tried against that reproducer on the board, and none of them help: latching
+`cur_bank` once on the leading edge of `port_wr` instead of every clock it is
+asserted; holding the RAM's clock enable off for the cycle of a bank-port
+write; `MEM_WAIT = 1`; and a settling cycle on `wait_n`.  All reverted.
+
 ## Reading it without a console
 
 **The monitor itself now says on the LEDs what it says on the console**, so
