@@ -151,7 +151,11 @@ module top_romwbw (
   // the Z80 only led8[0] meant a staged-but-wedged machine looked exactly
   // like a staged-and-happy one.  led[3] stays lit once the ROM is in, so a
   // glance still says which half of the story you are reading.
+  // sd_det is HIGH when a card is present, measured on the board: an empty
+  // slot reads 0 and a card lets the pull-up take the pin.  This lamp used
+  // to show ~sd_det, so it lit for an EMPTY slot -- the wrong way round,
+  // and it cost a diagnosis by reading "no card" with a card in.
   assign led = rom_done ? {1'b0, 1'b1, led8[2:0]}
-                        : {rom_failed, 1'b0, sdram_ready, ~sd_det, 1'b0};
+                        : {rom_failed, 1'b0, sdram_ready, sd_det, 1'b0};
 
 endmodule

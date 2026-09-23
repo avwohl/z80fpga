@@ -170,6 +170,6 @@ module top_sdtest (
   // glance still says which half of the story you are reading.
   // Everything interesting comes out of the console here, so the lamps only
   // have to say the board is alive and whether it thinks a card is in.
-  assign led = {1'b1, ~sd_det, led8[2:0]};
+  assign led = {1'b1, sd_det, led8[2:0]};
 
 endmodule
