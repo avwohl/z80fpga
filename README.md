@@ -125,10 +125,14 @@ across the cycle the way the real part drives an external bus.
 - **[Signaloid C0-microSD](boards/c0_microsd/)** — fits, at 94% of the
   UP5K's logic. 128 KB of RAM in the four SPRAM blocks, an 8 KB boot ROM,
   console on the SD breakout pins.
-- **[Tang Nano 20K](boards/tang_nano_20k/)** — a plan rather than a build. A
-  Gowin GW2AR-18 with 8 MB of SDR SDRAM *inside the package*, which is the only
-  small board here whose RomWBW-sized memory needs no board wiring at all, and
-  the open Gowin flow is already in the OSS CAD Suite.
+- **[Tang Nano 20K](boards/tang_nano_20k/)** — a Gowin GW2AR-18 with 8 MB of
+  SDR SDRAM *inside the package*, the only small board here whose RomWBW-sized
+  memory needs no board wiring at all. 8 KB of ROM and 64 KB of RAM in block
+  RAM, a 27 MHz Z80, yosys and nextpnr. It builds, it has been loaded onto a
+  real board, and **it prints its banner and then restarts** — the one target
+  here that has run and not worked. The design is not why: `make gatesim` runs
+  the monitor on the synthesised netlist and gets the whole thing, bank check
+  included. That board's README has what is ruled out and what is left.
 - **[Qomu](boards/qomu/)** — does not fit, and cannot. The note explains why
   and what the board is good for instead.
 
@@ -140,7 +144,9 @@ What has and has not run, kept honest: the Nexys A7-100T boots RomWBW's HBIOS
 and CP/M 2.2 on real silicon, off a bitstream in the board's QSPI flash. The
 Arty, Icepi Zero and C0-microSD builds are verified to a placed, routed,
 timing-closed bitstream and no further, because none of those boards was ever
-attached. The SD-backed disks read *and* write: CP/M copies a file to `C:`,
+attached. The Tang Nano 20K has been attached and does not work: it prints its
+banner and restarts, and the fault is somewhere between a netlist that
+simulates correctly and silicon that does not run it. The SD-backed disks read *and* write: CP/M copies a file to `C:`,
 and after reconfiguring the FPGA the file is still there and runs from the
 card.
 [boards/nexys_a7_100t/romwbw](boards/nexys_a7_100t/romwbw/) has the bug that
