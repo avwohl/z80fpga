@@ -30,6 +30,12 @@ RAM_N    equ 2                 ; must match the SoC's RAM_BANKS
 ;
 ; Lit is a 1 on every board here, and the leftmost of the three is the high
 ; bit.  A board with no LEDs writes the port and nothing happens.
+;
+; The verdict is written as F6h/F7h rather than 6/7.  The lamps show the low
+; three bits either way, and the high nibble is what
+; boards/tang_nano_20k/flashreport_top.sv watches for: it page-programs any
+; F0h|n into the configuration flash, so on a board whose console has died
+; the verdict still comes off over JTAG.  See that board's README.
 
          org 0000h
 
@@ -49,9 +55,9 @@ start:   di
 
          push af                ; say the verdict on the LEDs before the console,
          or a                   ; because the console is what may not be there
-         ld a,6
-         jr z,ledv
-         ld a,7
+         ld a,0F6h              ; the high nibble is for boards that report
+         jr z,ledv              ; through the flash; the lamps show the low
+         ld a,0F7h              ; three bits either way
 ledv:    out (LED),a
          pop af
 

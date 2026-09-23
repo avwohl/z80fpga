@@ -639,6 +639,13 @@ machine.  Anything that matters should be re-measured inside one build
 before it is believed, and the flash build is the one to use, because it
 needs nobody watching.
 
+**Re-established inside the flash build alone, which is the point of the
+caveat:** the real `sw/boot.z80`, unmodified except that its verdict is now
+written as `F6h`/`F7h` so the flash writer picks it up, reports **neither**.
+Not `F6`, not `F7`.  So the checker does not reach a verdict at all, and
+that headline survives the two-bitstream problem even though the finer
+probe results may not.
+
 **Refresh is not the mechanism either**, which was the best-fitting guess
 and is worth writing down as dead.  The core drives `{I, R}` on the address
 bus during T3-T4 of every M1 (`z80_core.sv`, `a = (tcnt >= 3) ? {rI, rR} :
