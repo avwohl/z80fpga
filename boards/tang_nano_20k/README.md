@@ -405,9 +405,17 @@ configuration SPI pins to user logic after configuration, and
 `openFPGALoader --dump-flash -o <addr> --file-size <n>` reads the flash back.
 Between them, logic that writes a flash page is a readback channel over JTAG.
 
-The pins are bonded out on this package, which was the part in doubt. From
-apicula's own chipdb (`GW2A-18C.msgpack.xz`, the `pinout`/`QFN88` table), the
-configuration-SPI signals are:
+The pins are bonded out on this package, which was the part in doubt.
+[`pinout-qfn88.txt`](pinout-qfn88.txt) is the whole table, recovered from
+apicula's own chipdb (`GW2A-18C.msgpack.xz`) rather than a datasheet, so it
+agrees with what nextpnr will accept in a `.cst` -- 66 user pins, which is
+what the datasheet says this package has. It is in the tree because every
+route to getting output off a board with a dead console, a second UART on a
+header pin or a text console on HDMI, starts with knowing which pin is
+which, and that was the slow part every time. A blank in its last column
+means nothing here uses that pin, **not** that the board leaves it free:
+several go to the HDMI connector, and the Sipeed schematic has to say so
+before anything drives them. The configuration-SPI signals are:
 
 - **MCLK** pin 59 (`IOR34B`), **MCS_N** pin 60 (`IOR34A`)
 - **MO** pin 61 (`IOR33B`) to the flash, **MI** pin 62 (`IOR33A`) from it

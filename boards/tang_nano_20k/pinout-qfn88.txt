@@ -1,0 +1,85 @@
+Package pins of the GW2AR-LV18QN88C8/I7, recovered from apicula's own chip
+database (GW2A-18C.msgpack.xz, the pinout/QFN88 table) rather than from a
+datasheet, so it agrees with what nextpnr will actually accept in a .cst.
+
+The right-hand column is what this board is known to wire each pin to, from
+tang_nano_20k.cst and the board notes.  A blank there does NOT mean the pin
+is free: it means nothing in this repository uses it, and the Sipeed
+schematic has to say what the board does with it before anything drives it.
+Several of these go to the HDMI connector.  The GW2AR's SDRAM is bonded
+inside the package and does not appear here at all.
+
+Why it is in the tree: with this board's console dead, every route to getting
+output off it -- a second UART on a header pin, or a text console on HDMI --
+starts with knowing which pin is which, and that was the slow part every
+time.  The configuration-SPI pins in particular are the flash readback
+channel described in the README.
+
+pin  IOB      functions                  used by this board
+---  -------  -------------------------  ------------------
+  4  IOL7A    LPLL1_T_IN                 clk
+  5  IOR25B   TMS                        
+  6  IOR26A   TCK                        
+  7  IOR26B   TDI                        
+  8  IOR25A   TDO                        
+  9  IOR31B   RECONFIG_N                 
+ 10  IOL29A   GCLKT_6                    
+ 11  IOL29B   GCLKC_6                    
+ 13  IOL45A   LPLL2_T_IN                 
+ 15  IOL47A   LPLL2_T_FB                 led0
+ 16  IOL47B   LPLL2_C_FB                 led1
+ 17  IOL49A   -                          led2
+ 18  IOL49B   -                          led3
+ 19  IOL51A   -                          led4
+ 20  IOL51B   -                          led5
+ 25  IOB6A    -                          
+ 26  IOB6B    -                          
+ 27  IOB8A    -                          
+ 28  IOB8B    -                          
+ 29  IOB14A   -                          
+ 30  IOB14B   -                          
+ 31  IOB18A   -                          
+ 32  IOB18B   -                          
+ 33  IOB24A   -                          
+ 34  IOB24B   -                          
+ 35  IOB30A   GCLKT_4                    
+ 36  IOB30B   GCLKC_4                    
+ 37  IOB34A   -                          
+ 38  IOB34B   -                          
+ 39  IOB40A   -                          
+ 40  IOB40B   -                          
+ 41  IOB43A   -                          
+ 42  IOB42B   -                          
+ 48  IOR49B   -                          
+ 49  IOR49A   -                          
+ 51  IOR45A   RPLL2_T_IN                 
+ 52  IOR39A   SCLK                       
+ 53  IOR38B   DOUT WE_N                  
+ 54  IOR38A   DIN CLKHOLD_N              
+ 55  IOR36B   SSPI_CS_N D0               
+ 56  IOR36A   SO D1                      
+ 57  IOR35A   FASTRD_N D3                
+ 59  IOR34B   MCLK D4                    
+ 60  IOR34A   MCS_N D5                   
+ 61  IOR33B   MO D6                      
+ 62  IOR33A   MI D7                      
+ 63  IOR29A   GCLKT_3                    
+ 69  IOT50A   -                          uart_tx
+ 70  IOT44B   -                          uart_rx
+ 71  IOT44A   -                          
+ 72  IOT40B   -                          
+ 73  IOT40A   -                          
+ 74  IOT34B   -                          
+ 75  IOT34A   -                          
+ 76  IOT30B   GCLKC_1                    
+ 77  IOT30A   GCLKT_1                    
+ 79  IOT27B   GCLKC_0                    
+ 80  IOT27A   GCLKT_0                    sd_dat2
+ 81  IOT17B   -                          sd_dat3/cs
+ 82  IOT17A   -                          sd_cmd
+ 83  IOT6B    -                          sd_clk
+ 84  IOT6A    -                          sd_dat0
+ 85  IOT4B    -                          sd_dat1
+ 86  IOT4A    -                          
+ 87  IOR30B   MODE1                      MODE1 strap
+ 88  IOR30A   MODE0                      MODE0 strap
