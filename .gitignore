@@ -51,3 +51,4 @@ __pycache__/
 # board and sim scratch: throwaway tops, netlists and probe images
 boards/*/_*
 sim/_*
+boards/icepi_zero/sdram/boot16.z80
