@@ -665,6 +665,25 @@ that is how `CALL 08000h` was cleared early on.  The flash build does not.
 The difference between them is `flash_wr`, three MSPI pins and
 `--mspi_as_gpio`, and which of those matters is not known.
 
+**It is not `8000h`, and it is not banking.**  The same bare probe copied to
+`C000h` -- far from `8000h`, clear of the stack, no `OUT` anywhere in it --
+also fails to run, while a data read of `C000h` from ROM returns the `3Eh`
+that was copied there.  So in this build the Z80 **reads and writes the RAM
+correctly and cannot fetch instructions from it.**
+
+That is the refresh mechanism's exact shape, and it deserved another try
+since the first test of it ran inside a probe that never executed.  The core
+drives `{I, R}` through T3-T4 of every M1 and the RAM's enable is tied high,
+so it latches that address and overwrites the byte the fetch just read --
+which costs nothing while code runs from the ROM, because that fetch takes
+`rom_rdata`.  `rfsh_n` is already wired into the SoC and goes nowhere but
+the `unused` sink, so `en = rfsh_n` is a one-line, exactly-targeted fix.
+
+**It does not work.**  Tried on the board, `make test` still clean at
+0/32080, and the probe at `C000h` still does not run.  Reverted.  So the
+refresh reading is wrong twice over, and what stops instruction fetch from
+this RAM while data access is fine remains open.
+
 **Two traps in the instrument itself, both learned the hard way.**
 
 The flash pages are **not erased between runs**.  A page program only clears

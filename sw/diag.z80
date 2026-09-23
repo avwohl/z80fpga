@@ -1,20 +1,17 @@
-; Clean baseline, fresh flash region, nothing carried over.
+; Is it execution from the common bank at all, or just 8000h?
 ;
-; F1 and F2 come from ROM, before anything else, so they prove the channel
-; is alive in this very run -- a silence after them means something, and a
-; silence instead of them means the instrument.
+; A bare probe at 8000h does not run in this build, though the copy lands.
+; This puts the identical probe at C000h instead -- same common bank, far
+; from 8000h, and clear of the stack at FFF0h.
 ;
-;   F1  running, from ROM
-;   F2  still running, from ROM
-;   F3  a bare probe in the common bank ran      (no banking in it at all)
-;   F4  that probe returned
-;   F5  a probe that does a bank switch reached its next instruction
-;   F6  that probe returned
+; F1 and F2 come from ROM first, so the channel is proved alive in this run.
+;
+;   F1 F2      the channel is alive
+;   F3         a bare probe at C000h RAN
+;   F4         it returned
+;   F1 F2 only execution from the common bank fails wherever it is put
 
 LED      equ 0FFh
-BANK_RAM equ 078h
-BANK_ROM equ 07Ch
-RAM_BASE equ 080h
 
          org 0000h
 
@@ -27,21 +24,19 @@ start:   di
          out (LED),a
          call bigdel
 
-         ld hl,pa_s             ; probe A: no banking anywhere in it
-         ld de,08000h
+         ld hl,pa_s
+         ld de,0C000h
          ld bc,pa_e-pa_s
          ldir
-         call 08000h            ; emits F3
-         ld a,0F4h
+
+         ld a,(0C000h)          ; prove the copy landed: want 3Eh -> E
+         and 00Fh
+         or 0F0h
          out (LED),a
          call bigdel
 
-         ld hl,pb_s             ; probe B: with a bank switch
-         ld de,08000h
-         ld bc,pb_e-pb_s
-         ldir
-         call 08000h            ; emits F5
-         ld a,0F6h
+         call 0C000h            ; emits F3
+         ld a,0F4h
          out (LED),a
 hang:    jr hang
 
@@ -60,12 +55,3 @@ pa_s:    ld a,0F3h
          out (LED),a
          ret
 pa_e:
-
-pb_s:    ld a,RAM_BASE
-         out (BANK_RAM),a
-         ld a,0F5h
-         out (LED),a
-         xor a
-         out (BANK_ROM),a
-         ret
-pb_e:
