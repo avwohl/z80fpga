@@ -127,7 +127,10 @@ rather than trying to make one engine cover both bus models.
   `make test-romwbw512 ROMWBW_ROM=path/to/image.rom` builds the same bench
   with `ROMWBW512` defined, stages 1024 blocks and compares the chip against
   the card byte for byte -- so "only the block count differs" is no longer
-  taken on trust. What is still open is the hardware half: the Icepi Zero's
+  taken on trust. Whether the staged image then *boots* is still open: HBIOS
+  walks banks to size memory before it says anything, which takes about 2.05
+  seconds of simulated time out of block RAM and longer out of SDRAM, so the
+  bench needs hours of wall clock to find out. What is still open is the hardware half: the Icepi Zero's
   base and `sdram/` builds run, but `romwbw/` has never been loaded, because
   that needs a microSD card in the slot.
 - **A bus grant, so the loader need not borrow the reset.** The core is held

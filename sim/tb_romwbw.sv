@@ -72,6 +72,12 @@ module tb_romwbw;
     end
   endtask
 
+  integer tr;
+  initial if (!$value$plusargs("trace=%d", tr)) tr = 0;
+  always @(posedge clk) if (tr)
+    if (!dut.iorq_n && dut.m1_n && !dut.wr_n)
+      $display("[%0t] OUT %02h <- %02h   (pc area %04h)", $time, dut.a[7:0], dut.dout, dut.a);
+
   initial forever begin
     uart_get(ch);
     nrx = nrx + 1;

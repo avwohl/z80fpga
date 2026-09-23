@@ -230,6 +230,43 @@ gatesim: gatesim.v
 # MUX2_LUT* rows are the slice muxes that pair LUT4s up, not more LUT4s --
 # the MUX2_LUT5 row's denominator is exactly half the LUT4 row's -- so LUT4
 # alone is the figure to set beside the other boards'.
+# `make flashreport` builds the instrument that produced this board's only
+# hardware result, and it is here because it spent a whole bring-up living in
+# a shell history instead. The console bridge is dead silicon, so answers come
+# back through the configuration flash: the Z80 writes F0h|n to the LED port,
+# flash_wr page-programs that into the SPI flash, and openFPGALoader reads it
+# out over JTAG.
+#
+# REGION picks the 64 KB region markers land in, and it has to move every run:
+# a page program only clears bits, so a marker from a previous run is still
+# there and reads as this one's. Only 70h..7Fh are usable -- the flash wraps
+# at 8 MB, so 80h and up alias onto the bitstream, and the bitstream itself
+# ends near 7.3 MB.
+#
+# PROG is the Z80 program; sw/boot.z80 reports F1h alive, F6h banked memory
+# ok, F7h a bank read back wrong and F3h at the prompt.
+REGION  ?= 0x7F
+# chparam wants a plain number, not 0x7F
+REGION_DEC := $(shell python -c "print(int('$(REGION)',0))")
+PROG    ?= $(ROOT)/sw/boot.z80
+
+report.hex: $(PROG) $(ROOT)/tools/zasm.py
+	python $(ROOT)/tools/zasm.py $(PROG) -o $@ --size 8192
+
+flashreport.fs: flashreport_top.sv $(ROOT)/rtl/soc/flash_wr.sv $(SRC) $(MEMS) report.hex flashreport.cst
+	yosys -p "read_verilog -sv -I $(ROOT)/rtl/core $(filter-out top.sv,$(SRC)) $(ROOT)/rtl/soc/flash_wr.sv flashreport_top.sv; chparam -set FLASH_PAGE $(REGION_DEC) top; synth_gowin -family $(SYNFAM) -top $(TOP) -json flashreport.json" -l flashreport_yosys.log
+	nextpnr-himbaechel --device $(DEVICE) --vopt family=$(FAMILY) --vopt cst=flashreport.cst --json flashreport.json --write flashreport_pnr.json --freq $(FREQ) -l flashreport_pnr.log
+	gowin_pack -d $(FAMILY) --mspi_as_gpio -o $@ flashreport_pnr.json
+
+flashreport: flashreport.fs
+	openFPGALoader -b tangnano20k --freq $(JTAG_FREQ) $<
+	@echo "now give it a few seconds, then: mingw32-make flashdump REGION=$(REGION)"
+
+# Read the markers back. Each marker n lives at <REGION><n>000h, and a page
+# that still reads FFh is one the run never wrote -- except n=15, whose marker
+# value IS FFh and can therefore never be told from an erased page.
+flashdump:
+	python $(ROOT)/tools/flashdump.py --region $(REGION)
 stat: z80fpga_pnr.json
 	@grep -A 34 "Device utilisation" nextpnr.log | 	 grep -E "Device utilisation|IOB:|LUT4:|MUX2_LUT|ALU:|DFF:|RAM16SDP4:|BSRAM:|BUFG:|rPLL:"
 
@@ -252,4 +289,4 @@ clean:
 # without a word.
 .DELETE_ON_ERROR:
 
-.PHONY: all prog flash ledchk beacon loopback gatesim stat timing clean
+.PHONY: all prog flash ledchk beacon loopback flashreport flashdump gatesim stat timing clean

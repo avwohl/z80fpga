@@ -165,6 +165,22 @@ module tb_romload;
     end
   endtask
 
+  // +trace=1 shows every port write and, every so often, where the CPU is.
+  // A staged image that says nothing is either wedged on a bus cycle that
+  // never completes or looping somewhere -- these two tell those apart.
+  integer tr;
+  initial if (!$value$plusargs("trace=%d", tr)) tr = 0;
+
+  integer tick = 0;
+  always @(posedge clk) if (tr) begin
+    if (!dut.iorq_n && dut.m1_n && !dut.wr_n)
+      $display("[%0t] OUT %02h <- %02h   (pc area %04h)", $time, dut.a[7:0], dut.dout, dut.a);
+    tick = tick + 1;
+    if (tick % 200000 == 0)
+      $display("[%0t] a=%04h mreq_n=%b rd_n=%b wr_n=%b m1_n=%b wait_n=%b rom_done=%b",
+               $time, dut.a, dut.mreq_n, dut.rd_n, dut.wr_n, dut.m1_n, dut.wait_n, rom_done);
+  end
+
   initial forever begin
     uart_get(ch);
     if (nrx < 256) rxbuf[nrx] = ch;
@@ -228,14 +244,21 @@ module tb_romload;
         // image says for itself, but do not assert on it.
         $display("--- console ---");
         // Give the image time to come up and say who it is.
+        // Long, and measured rather than guessed.  sim/tb_romwbw.sv runs this
+        // same image out of block RAM and takes about 2.05 SECONDS of
+        // simulated time to reach its first character -- HBIOS sizes memory
+        // by walking banks first, which is the 78h/7Ch traffic a trace shows.
+        // Out of SDRAM it is slower still.  An earlier version of this waited
+        // 128 ms and reported a silent image, which looked exactly like a
+        // loader bug and was nothing of the sort.
         fork
           wait (nrx >= 30);
-          repeat (DIV * 400000) @(posedge clk);
+          repeat (600_000_000) @(posedge clk);
         join_any
         repeat (DIV * 2000) @(posedge clk);
         $display("");
         if (nrx == 0)
-          $display("FAIL: %0d blocks staged byte for byte, but the image said nothing", BLOCKS);
+          $display("FAIL: %0d blocks staged byte for byte, but no console output within the time allowed", BLOCKS);
         else
           $display("PASS: %0d blocks staged off the card, and the image booted (%0d characters)",
                    BLOCKS, nrx);
