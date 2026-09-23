@@ -953,3 +953,87 @@ physical replug has revived it before and nothing else has.
 
 So the last measurement needs a power cycle, and the diagnostic in flash is
 there to make that power cycle produce the answer by itself.
+
+## It is not marginal timing, and the tool's "PASS" does not cover the memories, 2026-09-23
+
+The build before this one left one clean fact: this bitstream **reads and
+writes RAM correctly but cannot fetch instructions from it**. `sw/diag.z80`
+copies a five-byte probe to `C000h` -- the common bank, far from `8000h`,
+clear of the stack, no `OUT` anywhere in it -- reads `C000h` back from ROM to
+prove the copy landed, and then calls it. The read returns the `3Eh` that was
+copied. The call emits nothing.
+
+That result is now reproduced with the instrument fixed. Every run below
+reports `F1` and `F2` **from ROM first**, so the channel is proved alive in
+the same run that produces the answer, and every run gets a **fresh flash
+region**, because a page program only clears bits and an old marker is
+otherwise indistinguishable from a new one.
+
+**Three placements, one result.** Seeds 1, 2 and 3 of the identical design
+place at Fmax 38.79, 39.15 and 40.69 MHz. All three: channel alive, copy
+landed, probe did not run, did not return. Byte-identical outcomes.
+
+**A quarter of the clock, the same result.** `_slowtop.sv` divides the board
+clock by four through a `BUFG` and runs the whole design at 6.75 MHz -- four
+times the margin, the derived net reported by name as `clk_sys`. Identical:
+`F1 F2 FE`, no `F3`, no `F4`.
+
+So this is a deterministic functional fault and not marginality. That closes
+the timing question the way three seeds alone could not.
+
+**But the timing report was never covering the memories anyway.** Worth
+knowing for its own sake, and it is the same silent-acceptance hazard
+CLAUDE.md already records for this toolchain:
+
+```
+grep -o "Sink [^ ]*\.\(AD\|DI\|CE\|WRE\|BLKSEL\)[0-9]*" nextpnr.log   # nothing
+grep -c "u_soc.u_ram\|u_soc.u_rom" nextpnr.log                        # 0
+```
+
+nextpnr-himbaechel's critical path report never sinks into a block RAM input
+pin, and never mentions `u_ram` or `u_rom` at all. The one BSRAM it times is
+the dispatch ROM, and only as a *source* -- `u_soc.u_cpu.drom.0.0.DO0`. So
+`Max frequency ... 38.79 MHz (PASS at 27.00 MHz)` is a claim about a subset of
+the design that **excludes every path entering a memory**. The RAM address
+path is unconstrained rather than met. It did not turn out to be the fault
+here, but do not read that PASS as covering the memories, and do not spend the
+seed sweep twice.
+
+**The RTL is not the fault.** `sim/tb_gate.sv` aside, `sim/tb_tang.sv` is new
+and instantiates `z80_soc` with this board's exact parameters -- 27 MHz,
+`CPU_DIV = 1`, `ROM_BANKS 1`, `ROM_AW_P 13`, `RAM_BANKS 2` -- and runs
+`sw/diag.z80` against it. It reaches every marker:
+
+```
+LED <- f1    LED <- f2    LED <- fe    LED <- f3    LED <- f4
+```
+
+`F3` is the probe running at `C000h` and `F4` is it returning. So whatever
+stops the board is below the RTL.
+
+**Gate level says the console top runs it and the flash-report top does not,
+and that second half is a simulation artifact -- do not trust it.** Synthesise
+either top, `setundef -undriven -zero`, `tools/tie_undriven.py`, and simulate
+against `sim/gowin_sp.v`: the console `top.sv` netlist produces `1 2 6 3 4` on
+`led8[2:0]`, the full program including the probe. The `flashreport_top.sv`
+netlist produces nothing at all -- `\u_soc.a` goes `Xxxx` on the fourth clock
+after reset release, at the first PC update.
+
+**That X does not correspond to anything on the board**, which runs the same
+bitstream as far as `F1 F2 FE` every time. Chased and not found: the dispatch
+ROM's `DO`, `AD`, `BLKSEL`, `CE` and `OCE` connections are byte-identical
+between the working and dead netlists; the Gowin `DFF` model already carries
+`initial Q = INIT`, so it is not ordinary flop X-pessimism; `RAM16SDP4` count
+is 2 in every variant including the working ones; and `setundef -init` changes
+nothing because `write_verilog` emits no `initial` blocks for it. Bisecting
+the top does correlate -- the dead variants are exactly those where something
+outside the SoC reads `led8[7:4]`, and registering `led8` first does not help
+-- but a logic-only difference cannot be a placement effect, and the board
+contradicts the result outright. It is recorded here so the next session does
+not spend a day on it believing it is the bug.
+
+**One trap in the checker itself.** A marker for `n` is written as `F0h|n`, so
+marker 15 is `FFh`, which is exactly what an erased page reads. Page 15 can
+never be detected and any checker that tests "not `FFh`" will report a false
+`FF` on every run. `scratchpad/check.py` requires the exact byte and still
+cannot see `n = 15`; do not use the top nibble value for anything real.

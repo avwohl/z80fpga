@@ -1,0 +1,68 @@
+; sw/diag.z80 with the delay loops stubbed out, for simulation only.
+;
+; The delays exist so boards/tang_nano_20k/flashreport_top.sv can finish one
+; page program before the next marker arrives.  A simulation has no flash, and
+; 20 x 65536 iterations of a wait loop is hours of iverilog, so bigdel returns
+; at once here.  Everything else is byte-for-byte sw/diag.z80.
+;
+; Built and run by sim/tb_tang.sv, which instantiates z80_soc with the Tang
+; Nano 20K's exact parameters.
+;
+; Is it execution from the common bank at all, or just 8000h?
+;
+; A bare probe at 8000h does not run in this build, though the copy lands.
+; This puts the identical probe at C000h instead -- same common bank, far
+; from 8000h, and clear of the stack at FFF0h.
+;
+; F1 and F2 come from ROM first, so the channel is proved alive in this run.
+;
+;   F1 F2      the channel is alive
+;   F3         a bare probe at C000h RAN
+;   F4         it returned
+;   F1 F2 only execution from the common bank fails wherever it is put
+
+LED      equ 0FFh
+
+         org 0000h
+
+start:   di
+         ld sp,0FFF0h
+         ld a,0F1h
+         out (LED),a
+         call bigdel
+         ld a,0F2h
+         out (LED),a
+         call bigdel
+
+         ld hl,pa_s
+         ld de,0C000h
+         ld bc,pa_e-pa_s
+         ldir
+
+         ld a,(0C000h)          ; prove the copy landed: want 3Eh -> E
+         and 00Fh
+         or 0F0h
+         out (LED),a
+         call bigdel
+
+         call 0C000h            ; emits F3
+         ld a,0F4h
+         out (LED),a
+hang:    jr hang
+
+bigdel:  ret
+unused:  ld b,20
+bd1:     push bc
+         ld de,0
+bd2:     dec de
+         ld a,d
+         or e
+         jr nz,bd2
+         pop bc
+         djnz bd1
+         ret
+
+pa_s:    ld a,0F3h
+         out (LED),a
+         ret
+pa_e:
