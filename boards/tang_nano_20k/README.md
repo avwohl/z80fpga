@@ -225,6 +225,37 @@ fault is:
   entries have bit 8 set and they are all in the `FD` page; `LDIR` is `047h`.
   Even total loss of the x9 parity bits would leave the monitor working.
 
+One level deeper was tried and does not reach: **the netlist nextpnr writes
+is not the netlist yosys wrote**. Packing adds cells -- 2617 LUT4 and 728 ALU
+against 2400 and 622 -- so `make gatesim` does not prove the placed design.
+`tools/pnr_json_to_v.py` converts `z80fpga_pnr.json` to Verilog (yosys cannot:
+`read_json` asserts on nextpnr's duplicate cell names), `sim/gowin_extra.v`
+has the primitives that only appear after packing, and `sim/gowin_alu.v` has
+the carry-chain helpers whose string `ALU_MODE` the suite's model has no case
+for. What stops it is the ALU itself: **packing folds each ALU's constant
+inputs into its LUT configuration and drops the ports**. 461 cells have an
+empty `I3`, where the post-synthesis netlist tied every one of them to a
+constant -- 415 to 1 and 207 to 0. The intent survives only in a
+`RAW_ALU_LUT` parameter, and apicula's own portmap maps `I0`, `I1` and `I3`
+to the slice LUT while leaving `I2` out, so those 16 bits are not indexed by
+the four data inputs and cannot be read off without documentation this flow
+does not carry. Reconstructing it would be a guess with a conclusion resting
+on it. Post-synthesis is as deep as this flow can be verified.
+
+Two things were also checked directly on the placed design and are fine: the
+clock is on a global network (`'u_soc.clk' net was routed` under "Routing
+globals"; the dangling `BUFG` cell in the JSON is how nextpnr represents it,
+not a missing buffer), and every block RAM's control pins are tied where they
+should be -- `CE` and `OCE` to `GOWIN_VCC`, `RESET` to `GOWIN_GND`, `WRE` to
+real logic on the 32 that are written.
+
+One thing nextpnr does **not** do on this family is check hold time. The log
+has a single `setup` line and no min-delay report anywhere. A hold violation
+would be silent, would survive slowing the clock -- which is exactly what
+halving it to 13.5 MHz showed -- and would not appear in any simulation here.
+It is the one mechanism still consistent with every observation, and nothing
+in this flow can confirm or locate it.
+
 What that leaves is the two links a simulation cannot reach: `gowin_pack`'s
 placement of block RAM contents into the bitstream, and the board itself.
 `gowin_unpack` recovers 37 `BSRAM` cells from `z80fpga.fs` -- the right count,
