@@ -370,9 +370,24 @@ and reflashing it is a Sipeed exercise rather than anything in this repository.
 
 ## Reading it without a console
 
-`make ledchk` builds and loads `sw/ledchk.z80`, which walks exactly the steps
-`sw/boot.z80`'s bank checker walks and reports on the LED port at `0xFF`
-instead of the UART. The **three rightmost LEDs** are that port's low three
+**The monitor itself now says on the LEDs what it says on the console**, so
+the ordinary `make` build is readable on a board whose console has failed.
+`sw/boot.z80` writes the LED port at four points, and the three rightmost
+LEDs are its low three bits, lit = 1, leftmost of the three the high bit:
+
+- **1** -- alive, running from ROM
+- **6** -- banked memory ok
+- **7** -- a bank read back wrong
+- **3** -- at the prompt and echoing, which is the system up
+
+So a board sitting at **3** is working, whatever its console is doing. On the
+gate-level netlist it walks 1, 6, 3 while printing `z80fpga ready`,
+`banked memory ok` and the prompt, with the console output unchanged.
+
+`make ledchk` remains for the case where the monitor does not get that far.
+It builds `sw/ledchk.z80`, which walks exactly the steps `sw/boot.z80`'s bank
+checker walks and reports on the LED port instead of the UART, stopping at
+each one. The **three rightmost LEDs** are that port's low three
 bits, and a lit LED is a 1, so they read as a number with the leftmost of the
 three as the high bit:
 

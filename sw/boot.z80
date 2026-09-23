@@ -12,13 +12,31 @@ UART_ST  equ 000h              ; bit 0 RX ready, bit 1 TX idle
 UART_DAT equ 001h
 BANK_RAM equ 078h
 BANK_ROM equ 07Ch
+LED      equ 0FFh              ; the LED port; boards show its low three bits
 RAM_BASE equ 080h              ; RAM bank ids start here
 RAM_N    equ 2                 ; must match the SoC's RAM_BANKS
+
+; The monitor says the same things on the LED port that it says on the
+; console, because a board can have a console that does not work and this one
+; does: the Tang Nano's bridge died with JTAG still healthy, and for a while
+; the only way to ask the machine anything was to build a separate image.
+; Three bits is enough for the four states worth knowing from across a desk,
+; and it costs four instructions:
+;
+;   1  alive, running from ROM
+;   6  banked memory ok
+;   7  a bank read back wrong
+;   3  at the prompt, echoing - the system is up
+;
+; Lit is a 1 on every board here, and the leftmost of the three is the high
+; bit.  A board with no LEDs writes the port and nothing happens.
 
          org 0000h
 
 start:   di
          ld sp,0FFF0h
+         ld a,1
+         out (LED),a
          ld hl,banner
          call puts
 
@@ -28,6 +46,14 @@ start:   di
          ld bc,bt_end-bt_start
          ldir
          call 08000h            ; returns the error count in A
+
+         push af                ; say the verdict on the LEDs before the console,
+         or a                   ; because the console is what may not be there
+         ld a,6
+         jr z,ledv
+         ld a,7
+ledv:    out (LED),a
+         pop af
 
          or a
          jr nz,bad
@@ -43,6 +69,8 @@ bad:     push af
 report:  ld hl,crlf
          call puts
 
+         ld a,3                 ; up, and about to echo
+         out (LED),a
          ld hl,prompt
          call puts
 echo:    call getc
