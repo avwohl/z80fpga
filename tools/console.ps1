@@ -24,6 +24,10 @@ $ErrorActionPreference = "Stop"
 
 $sp = New-Object System.IO.Ports.SerialPort $Port, $Baud, "None", 8, "One"
 $sp.Handshake = "None"
+# DTR is asserted deliberately, and on the Icepi Zero it does something: that
+# board's tops reset on a DTR edge, so opening this console reboots the
+# machine and you see its banner rather than joining silently part-way through
+# a session. Boards that do not wire DTR ignore it.
 $sp.DtrEnable = $true
 $sp.RtsEnable = $true
 $sp.ReadTimeout = 50

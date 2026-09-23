@@ -113,8 +113,10 @@ that once, with the Nexys rebuild it obliges, rather than once per board.
 - **Tang Nano 20K** — the best tier (b) fit of any small board here, and the
   only one whose memory is already inside the FPGA package. See
   [../boards/tang_nano_20k/README.md](../boards/tang_nano_20k/README.md).
-- **Icepi Zero v1.1** — already supported at both tiers, but **the constraint
-  files in this tree are for a later revision and will not run on a v1.1**.
+- **Icepi Zero v1.3** — supported at both tiers and **run on hardware**: the
+  base build and the SDRAM build both pass the bank check. The constraint
+  files are v1.2-onward pins and **will not run on a v1.0 or v1.1**, where the
+  oscillator is on M2 rather than M1.
   See [../boards/icepi_zero/README.md](../boards/icepi_zero/README.md).
 - **Signaloid C0-microSD** — tier (a) only, and that is arithmetic rather than
   effort. See [../boards/c0_microsd/README.md](../boards/c0_microsd/README.md).

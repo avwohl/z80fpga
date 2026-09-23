@@ -173,11 +173,14 @@ the end of EI cannot accept an interrupt and the next one can.
   tri-states the pins at an M-cycle boundary is not implemented. `wait_n` is
   no longer on this list — the off-chip memory benches above hold it low for a
   variable number of T-states on every access.
-- **Hardware, except on one board.** The Nexys A7-100T has run: banner, bank
-  check, console echo, and RomWBW and CP/M 2.2 on top of that. The Arty,
-  Icepi Zero and C0-microSD builds are verified to a placed, routed,
-  timing-closed bitstream and no further, because none of those boards was
-  ever attached.
+- **Hardware, on three boards.** The Nexys A7-100T has run: banner, bank
+  check, console echo, and RomWBW and CP/M 2.2 on top of that. The Tang Nano
+  20K reports `banked memory ok` through its configuration flash, its console
+  bridge having died. The Icepi Zero v1.3 runs at 25 MHz with a working
+  console, and its `sdram/` build passes the bank check across all sixteen
+  banks of the board's SDRAM. The Arty and C0-microSD builds are verified to a
+  placed, routed, timing-closed bitstream and no further, because neither of
+  those boards has been attached.
 - **The SDRAM, against a real chip.** `sim/sdram_model.sv` is a model, and a
   model agreeing with the controller proves they agree, not that either
   matches the part on the board.

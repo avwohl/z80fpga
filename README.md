@@ -38,7 +38,7 @@ from HALT, each checked against the databook's T-state count.
 | `tools/zasm.py` | a Z80 assembler, for the boot ROM and test programs |
 | `sim/` | test benches |
 | `sw/boot.z80` | the boot monitor: banner, bank check, console echo |
-| `boards/` | Nexys A7-100T (runs on hardware), Arty A7-100T, Icepi Zero, Signaloid C0-microSD, and why not the Qomu |
+| `boards/` | Nexys A7-100T, Icepi Zero and Tang Nano 20K (all three run on hardware), Arty A7-100T, Signaloid C0-microSD, and why not the Qomu |
 
 `docs/architecture.md` explains how the microcode engine works,
 `docs/verification.md` how it is tested, `docs/memory_banking.md` the bank map,
@@ -142,11 +142,17 @@ portable than it looks.
 
 What has and has not run, kept honest: the Nexys A7-100T boots RomWBW's HBIOS
 and CP/M 2.2 on real silicon, off a bitstream in the board's QSPI flash. The
-Arty, Icepi Zero and C0-microSD builds are verified to a placed, routed,
-timing-closed bitstream and no further, because none of those boards was ever
-attached. The Tang Nano 20K has been attached and does not work: it prints its
-banner and restarts, and the fault is somewhere between a netlist that
-simulates correctly and silicon that does not run it. The SD-backed disks read *and* write: CP/M copies a file to `C:`,
+Icepi Zero runs too, on a v1.3: `banked memory ok` and a console at 25 MHz,
+and its `sdram/` build passes the same check across all sixteen banks of the
+board's SDRAM. The Arty and C0-microSD builds are verified to a placed,
+routed, timing-closed bitstream and no further, because neither of those
+boards has been attached. The Tang Nano 20K runs as well, and
+reports through its configuration flash because that board's UART bridge is
+dead hardware: `banked memory ok` and the prompt. It spent a long time
+printing only its banner, and the fault turned out to be in this repository
+after all -- a read mux whose select was a clock ahead of the data it was
+selecting, which broke instruction fetch out of the common bank and nothing
+else. The SD-backed disks read *and* write: CP/M copies a file to `C:`,
 and after reconfiguring the FPGA the file is still there and runs from the
 card.
 [boards/nexys_a7_100t/romwbw](boards/nexys_a7_100t/romwbw/) has the bug that

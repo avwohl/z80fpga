@@ -6,7 +6,7 @@
 # the RTL resolve without Vivado's working-directory rules getting in the way.
 
 set root [file normalize [file dirname [info script]]/../..]
-set out  [file join [file dirname [info script]] build]
+set out  [file join [file normalize [file dirname [info script]]] build]
 file mkdir $out
 foreach f {rtl/core/z80_ucode.mem rtl/core/z80_dispatch.mem sw/boot.hex} {
     file copy -force [file join $root $f] $out
