@@ -77,6 +77,26 @@ stat: z80fpga.config
 timing: z80fpga.config
 	@grep -E "constraining clock net|Max frequency|Max delay" nextpnr.log
 
+# Does the card work at all?  Same pins and same LPF as the RomWBW build, but
+# the ROM is in the bitstream and the CPU runs immediately, so a card that
+# never comes up produces a console message instead of a silent board.  See
+# the header of top_sdtest.sv -- it writes a sector as well as reading one.
+hdsk_test.hex: $(ROOT)/sim/hdsk_test.z80 $(ROOT)/tools/zasm.py
+	python $(ROOT)/tools/zasm.py $< -o $@ --size 8192
+
+sdtest.json: $(filter-out top_romwbw.sv,$(SRC)) top_sdtest.sv z80_ucode.mem z80_dispatch.mem hdsk_test.hex
+	yosys -p "read_verilog -sv -I $(ROOT)/rtl/core $(filter-out top_romwbw.sv,$(SRC)) top_sdtest.sv; 	          synth_ecp5 -top top_sdtest -json $@" -l sdtest_yosys.log
+
+sdtest.config: sdtest.json $(LPF)
+	nextpnr-ecp5 --$(DEVICE) --package $(PACKAGE) --speed $(SPEED) 	             --lpf $(LPF) --json $< --textcfg $@ --freq $(FREQ) -l sdtest_nextpnr.log
+	@grep -q "constraining clock net 'clk_sys'" sdtest_nextpnr.log || { echo "the clk_sys constraint never applied - see sdtest_nextpnr.log"; exit 1; }
+
+sdtest.bit: sdtest.config
+	ecppack --compress $< $@
+
+sdtest: sdtest.bit
+	openFPGALoader -b icepi-zero $<
+
 clean:
 	rm -f z80fpga.json z80fpga.config z80fpga.bit *.log $(MEMS)
 
@@ -85,4 +105,4 @@ clean:
 # entirely, and pack the failing placement into a bitstream without a word.
 .DELETE_ON_ERROR:
 
-.PHONY: all prog flash stat timing clean
+.PHONY: all prog flash sdtest stat timing clean

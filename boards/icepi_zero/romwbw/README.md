@@ -156,3 +156,37 @@ on top of each other — each make that bench fail.
 That is a long way from a board on a desk. In particular the image in that
 bench is 2 KB of boot monitor, not 512 KB of RomWBW, and no RomWBW image has
 been through this path at all.
+
+## The card comes up, and which card matters, 2026-09-23
+
+First hardware run of this build. With a **16 GB SDHC** card in the slot and
+no image on it, the lamps read **`led[3]` alone**: `rom_done` high, the Z80
+released, `led8` still zero because it is executing whatever was at
+LBA 0x400000 on a blank card. That is the expected shape of a good card with
+nothing useful on it, and it puts `sd_spi`, the SPI wiring, `rom_loader` and
+1024 blocks of staging on the record.
+
+A **128 GB SDXC** card in the same slot, same bitstream, gave **`led[2]`
+alone**: `sdram_ready` high, `rom_done` and `rom_failed` both low. Per
+`rom_loader.sv`'s own header that is a card that never raised ready -- the
+loader sitting in its first state, waiting. So the initialisation in
+`sd_spi.sv` does not bring that card up. Which step it stops at is not known
+yet; `sdtest` below is the build that would say.
+
+This is one card of each kind, not a survey. But **start with SDHC**: it is
+the conservative case and it is the one that has worked here.
+
+### `make sdtest`, when a card will not come up
+
+`romwbw/` holds the Z80 in reset until the ROM has been staged, so a card that
+never comes up gives a board that says nothing and one lamp to read it by.
+`top_sdtest.sv` answers the same question with a console instead: same pins,
+same `.lpf`, but the ROM is in the bitstream, so the CPU runs immediately and
+`sim/hdsk_test.z80` drives the card and prints what it said. HDSK's debug port
+is 0xFC, and its `status2` reads `E0 + sd_spi`'s state while the card machine
+is still working, which is how a stuck initialisation names the step it is
+stuck on.
+
+It writes a sector as well as reading one. The HDSK units sit below
+LBA 0x400000, clear of the ROM image, but do not point it at a card whose
+contents matter.

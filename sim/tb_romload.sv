@@ -172,7 +172,12 @@ module tb_romload;
 
     fork
       begin
-        repeat (4_000_000) @(posedge clk);
+        // Scaled, not fixed.  2 KB stages in about 4.7 ms of simulated time
+        // and 4 million clocks was a comfortable margin on that; 512 KB is
+        // 256 times the traffic and would trip a fixed watchdog long before
+        // the loader had done anything wrong. 30k clocks per block plus a
+        // fixed head keeps the same shape of margin at either size.
+        repeat (2_000_000 + BLOCKS * 30_000) @(posedge clk);
         $display("FAIL: timed out with rom_done=%b rom_failed=%b after %0d characters",
                  rom_done, rom_failed, nrx);
         $finish;
