@@ -397,6 +397,36 @@ the bridge failure itself.
 This is worth having rather than a throwaway because the LED port is the only
 channel off this part that still works. It needs one glance and no serial.
 
+## If the console is dead, the flash is the way out
+
+Not built, but scouted, because it is the only channel off this part that
+does not need a person looking at it. `gowin_pack --mspi_as_gpio` hands the
+configuration SPI pins to user logic after configuration, and
+`openFPGALoader --dump-flash -o <addr> --file-size <n>` reads the flash back.
+Between them, logic that writes a flash page is a readback channel over JTAG.
+
+The pins are bonded out on this package, which was the part in doubt. From
+apicula's own chipdb (`GW2A-18C.msgpack.xz`, the `pinout`/`QFN88` table), the
+configuration-SPI signals are:
+
+- **MCLK** pin 59 (`IOR34B`), **MCS_N** pin 60 (`IOR34A`)
+- **MO** pin 61 (`IOR33B`) to the flash, **MI** pin 62 (`IOR33A`) from it
+- and, unused for this, DOUT 53, DIN 54, SSPI_CS_N 55, FASTRD_N 57
+
+A page program needs an erased page, so pick an address past the bitstream --
+a `.fs` here is about 7.3 MB -- and read it first to see what is there.
+
+Two reasons it was scouted and not built. It can issue an erase or a program
+by accident and take the boot bitstream with it, which is recoverable over
+JTAG but not free. And it answers a diagnostic question that `make ledchk`
+answers for nothing. It is written down because the same channel is what a
+flash-backed disk or a bitstream-resident ROM would need later, and finding
+those four pin numbers was the slow part.
+
+It is worth being clear that this would *not* make the board usable. The
+console is this design's only I/O; a flash readback is a debug port, not a
+console. While the bridge is dead there is no operational system to have.
+
 ## The state of the board itself
 
 The board's flash holds the **`make ledchk` image**, not the monitor, so the
