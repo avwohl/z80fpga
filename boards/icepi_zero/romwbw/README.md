@@ -203,10 +203,12 @@ the lamps at the same time, which is the only thing that separates "never
 staged" from "staged and running". `sw/boot.z80`'s equivalent question was
 settled that way in an afternoon; this one needs somebody to look.
 
-In simulation the same image staged off a card model is byte-perfect in the
-chip, and whether it then boots is still running -- HBIOS walks banks to size
-memory for about 2.05 seconds of simulated time before it writes its first
-character, which is hours of wall clock in iverilog. An earlier run of that
-bench gave up after 128 ms and reported a silent image, which looked exactly
-like a loader bug and was not one. Do not read a short simulation as a
-verdict here.
+In simulation the whole path works. `make test-romwbw512` stages this image
+off a card model into SDRAM, finds it byte-perfect in the chip, and then boots
+it: `RomWBW HBIOS v3.5.1, 2025-05-21`. So the loader, the staging and running
+RomWBW out of SDRAM are all sound, and whatever the board is doing is not any
+of those.
+
+That result took hours of wall clock, and an earlier attempt waited 128 ms,
+saw nothing and read it as a loader bug -- wrong by about 28 ms. Do not read a
+short simulation as a verdict here.
