@@ -38,9 +38,17 @@ module tb_romload;
 `ifdef ROMWBW512
   localparam int          BLOCKS    = 1024;               // 512 KB of image
   localparam              IMG_FILE  = "sim/romwbw512k.hex";
+  // Stock RomWBW drives SSER at 0x68/0x6D, not the 0x00/0x01 this
+  // repository's own monitor uses.  Getting this wrong does not fail loudly:
+  // the image boots, writes to a port nothing is listening on, and the bench
+  // reports a silent machine -- which is exactly the symptom a broken loader
+  // would produce, and is how this bench first claimed 0 characters out of a
+  // perfectly staged image.
+  localparam bit          SSER      = 1'b1;
 `else
   localparam int          BLOCKS    = 4;                  // 2 KB of image
   localparam              IMG_FILE  = "sim/boot2k.hex";
+  localparam bit          SSER      = 1'b0;
 `endif
   localparam int          IMG       = BLOCKS * 512;
   localparam logic [31:0] LBA       = 32'h0040_0000;      // clear of both HDSK units
@@ -69,6 +77,7 @@ module tb_romload;
       .CLK_HZ     (CLK_HZ),
       .CPU_DIV    (1),
       .BAUD       (BAUD),
+      .CONSOLE_SSER (SSER),
       .USE_SDRAM  (1'b1),
       .USE_HDSK   (1'b1),
       .SDRAM_ROM  (1'b1),
@@ -217,10 +226,19 @@ module tb_romload;
 `ifdef ROMWBW512
         // Staging is the whole question here; see the header.  Report what the
         // image says for itself, but do not assert on it.
-        $display("--- console, for information only ---");
-        repeat (DIV * 4000) @(posedge clk);
-        $display("%0d characters out of a RomWBW image", nrx);
-        $display("PASS: %0d blocks staged off the card into SDRAM, byte for byte", BLOCKS);
+        $display("--- console ---");
+        // Give the image time to come up and say who it is.
+        fork
+          wait (nrx >= 30);
+          repeat (DIV * 400000) @(posedge clk);
+        join_any
+        repeat (DIV * 2000) @(posedge clk);
+        $display("");
+        if (nrx == 0)
+          $display("FAIL: %0d blocks staged byte for byte, but the image said nothing", BLOCKS);
+        else
+          $display("PASS: %0d blocks staged off the card, and the image booted (%0d characters)",
+                   BLOCKS, nrx);
         $finish;
 `endif
 

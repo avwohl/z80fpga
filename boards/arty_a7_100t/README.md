@@ -39,9 +39,9 @@ vivado -mode batch -source build.tcl
 ```
 
 `build/z80fpga.bit` comes out the other end, along with `utilization.rpt` and
-`timing.rpt`. It does not meet timing yet — see [Timing](#timing) below.
-Program it with Vivado's hardware manager or `openFPGALoader -b arty_a7_100
-build/z80fpga.bit`.
+`timing.rpt`. It meets timing — see [Timing](#timing) below.
+Program it with Vivado's hardware manager or
+`openFPGALoader -b arty_a7_100t build/z80fpga.bit`.
 
 Regenerate `sw/boot.hex` first if you changed the monitor:
 
@@ -67,10 +67,12 @@ cache — see [docs/roadmap.md](../../docs/roadmap.md).
 The design meets timing at the 100 MHz board clock, with 0 failing endpoints
 on setup, hold and pulse width. It has still never been on hardware.
 
-- **WNS** — +0.927 ns, **TNS** 0.000 ns, 0 of 2506 endpoints failing.
-- **Hold** — WHS +0.037 ns, THS 0.000 ns.
-- **Utilization** — about 3000 LUTs (4.7%), 392 registers, 72 block RAM
-  tiles (53%). The LUT count wanders by a few between runs.
+Rebuilt 2026-09-23, after the read-mux change in `rtl/soc/z80_soc.sv`:
+
+- **WNS** — +1.270 ns, **TNS** 0.000 ns, 0 of 2517 endpoints failing.
+- **Hold** — WHS +0.078 ns, THS 0.000 ns.
+- **Utilization** — 3025 LUTs (4.77%), 396 registers, 72 block RAM tiles
+  (53.33%). The LUT count wanders by a few between runs.
 
 Closing it is entirely a matter of constraints, and the constraints are the
 interesting part of `arty_a7_100t.xdc`. The core runs on a *clock enable*, not
