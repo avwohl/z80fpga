@@ -4,10 +4,14 @@
 This note exists so the question does not have to be re-opened.
 
 The Qomu carries an EOS S3, which pairs a Cortex-M4F with a small eFPGA
-fabric: **891 logic cells**, 8 KB of fabric RAM, and two multipliers. The Z80
-core alone synthesises to about 4700 four-input LUTs and 420 flip-flops (the
-measured numbers are in [../c0_microsd/README.md](../c0_microsd/README.md)),
-more than five times the fabric. Cutting it down to fit would mean giving up
+fabric: **891 logic cells**, 8 KB of fabric RAM, and two multipliers. The
+smallest whole SoC in this tree is the one in
+[../c0_microsd/README.md](../c0_microsd/README.md), and it measures **5076 of
+an iCE40UP5K's 5280 logic cells** -- nearly six times the Qomu's fabric, with
+the RAM in SPRAM rather than in cells. The core on its own is a few hundred
+cells less than that, which does not change the arithmetic: this file used to
+quote "about 4700 four-input LUTs and 420 flip-flops" and cite that README for
+them, and no such pair of numbers is in it. Cutting it down to fit would mean giving up
 the microcode ROM, the second register set, or the index registers — at which
 point it is not a Z80 any more.
 

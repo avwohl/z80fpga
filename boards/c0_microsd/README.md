@@ -18,11 +18,11 @@ mingw32-make            # or make, on a machine that has it
 ## What it builds to
 
 ```
-ICESTORM_LC     5107 / 5280   96%
+ICESTORM_LC     5076 / 5280   96%
 ICESTORM_RAM      20 /   30   66%
 SB_SPRAM256KA      4 /    4  100%
 SB_IO              5 /   21
-Max frequency for clk_sys: 8.64 MHz (PASS at 6.00 MHz)
+Max frequency for clk_sys: 8.65 MHz (PASS at 6.00 MHz)
 ```
 
 96% of the logic is not comfortable. The two reductions that would fix it —
