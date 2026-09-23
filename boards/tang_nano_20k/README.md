@@ -491,11 +491,18 @@ console interface, so no driver had to be disturbed:
   must read `6010`.
 - `FT_EE_UASize` returns a user area of 0.
 
-Those two things cannot both be true of a healthy board. The descriptors the
-device is enumerated with -- a Sipeed date-coded serial and a custom product
-string -- can only have come from that EEPROM when it was plugged in. It now
-reads blank. So the EEPROM has lost its contents since enumeration, and the
-chip has been running on what the host cached.
+Those two things sit oddly together. The descriptors the device is enumerated
+with -- a Sipeed date-coded serial and a custom product string -- can only
+have come from that EEPROM when it was plugged in, and it now reads blank.
+
+**But that is not established, and the obvious test does not settle it.** A
+`pnputil /disable-device` + `/enable-device` on the composite parent brings
+the device back still reporting `2025030317`, so the chip was never actually
+reset and never re-read its EEPROM. A software disable does not power-cycle
+it. So "the EEPROM lost its contents and the host is running on cached
+descriptors" and "the EEPROM is fine and the read path is blocked" both still
+fit, and only a real power cycle would tell them apart. The D2XX reads are
+evidence, not a verdict.
 
 That fits everything else in this file. The USB history recorded below is a
 device that enumerated, failed with Code 43, recovered on a replug, worked,
@@ -506,7 +513,30 @@ defaults, while which channel is a UART and whether it is a VCP are EEPROM
 settings. And it explains why nothing in this repository and nothing on the
 host could touch it.
 
-**The repair is FT_PROG**, writing the configuration back -- VID 0403,
+**Before any of that, note what the vendor says.** Sipeed's own FAQ for this
+board gives two remedies for a console that has stopped, and neither is
+exotic: *replug the Type-C cable to disconnect the uart connection*, and, if
+there is no COM device but two converter devices, *right click converter B ->
+Properties -> Advanced -> Load VCP, then reconnect*. The first is the one
+thing that has ever revived this board. The second does not apply here --
+COM7 exists and the driver's own settings look ordinary, `PortName COM7`,
+`LatencyTimer 16`, `ConfigData 11 08 3f 3f`. There is also a known issue
+where the official Gowin tools unload the FTDI driver and kill the UART port
+in passing; nothing here runs those, but it is the same failure shape.
+
+Worth recording because it was checked: **the Zadig split on this board is
+the correct one.** Interface 0 on WinUSB for JTAG, interface 1 left on the
+FTDI bus driver for the console, which is what every FT2232 JTAG guide
+prescribes and what the top of this file already says. Putting WinUSB on
+both is what breaks channel B, and that is not what happened here.
+
+Tried since, all successful and none of them any help: removing the FTDIBUS
+port node outright with `pnputil /remove-device` and rescanning so the driver
+rebuilt it from scratch, and disabling `MI_00` so nothing held the JTAG
+channel while the console was read.
+
+**If the EEPROM really is gone, the repair is FT_PROG**, writing the
+configuration back -- VID 0403,
 PID 6010 so `openFPGALoader -b tangnano20k` still matches, channel A for
 JTAG and channel B as a VCP UART. It needs FTDI's D2XX driver on interface
 0, which Zadig replaced with WinUSB, so that has to be put back first. If
