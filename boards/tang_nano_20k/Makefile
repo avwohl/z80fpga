@@ -163,6 +163,36 @@ ledchk: ledchk.fs
 flash: z80fpga.fs
 	openFPGALoader -b tangnano20k --freq $(JTAG_FREQ) -f $<
 
+# `make gatesim` runs the console bench against the SYNTHESISED netlist
+# rather than the RTL, which is the only simulation that can see what
+# synthesis did to the memories.  Three things make it possible at all, and
+# sim/gowin_sp.v's header says why each one is needed:
+#
+#   * setundef gives the constant-0 net a value.  yosys emits a driver only
+#     for the constant-1 one, so without this every block RAM's BLKSEL is x
+#     and the netlist sits dead.  tie_undriven.py mops up what it leaves.
+#   * sim/gowin_sp.v supplies SP and SPX9, which the suite ships as empty
+#     blackboxes -- both of them, because the dispatch table is the x9 one.
+#   * strip_blackbox.py removes those empty declarations so the two libraries
+#     can be compiled together.
+#
+# It is slow -- 7 ms of a 27 MHz board is a couple of minutes -- and it needs
+# iverilog, which comes with the same suite as yosys.
+CELLS := $(OSS_CAD_ROOT)/share/yosys/gowin/cells_sim.v
+
+gatesim.v: $(SRC) $(MEMS)
+	yosys -p "read_verilog -sv -I $(ROOT)/rtl/core $(SRC); \
+	          synth_gowin -family $(SYNFAM) -top $(TOP); \
+	          setundef -undriven -zero; write_verilog -noattr $@" -l gatesim_yosys.log
+	python $(ROOT)/tools/tie_undriven.py $@ $@.tied
+	mv $@.tied $@
+
+gatesim: gatesim.v
+	python $(ROOT)/tools/strip_blackbox.py "$(CELLS)" gatesim_cells.v SP SPX9
+	iverilog -g2012 -o gatesim.vvp $(ROOT)/sim/tb_gate.sv gatesim.v \
+	         $(ROOT)/sim/gowin_sp.v gatesim_cells.v
+	vvp gatesim.vvp
+
 # The device utilisation table, which is the one after packing.  The
 # MUX2_LUT* rows are the slice muxes that pair LUT4s up, not more LUT4s --
 # the MUX2_LUT5 row's denominator is exactly half the LUT4 row's -- so LUT4
@@ -179,6 +209,7 @@ timing: z80fpga_pnr.json
 clean:
 	rm -f z80fpga.json z80fpga_pnr.json z80fpga.fs *.log $(MEMS)
 	rm -f ledchk.json ledchk_pnr.json ledchk.fs ledchk.hex ledchk_top.sv
+	rm -f gatesim.v gatesim_cells.v gatesim.vvp
 
 # nextpnr writes the post-route netlist even when timing fails, and then exits
 # 1.  Without this, the next make would find a newer _pnr.json than .json,
@@ -186,4 +217,4 @@ clean:
 # without a word.
 .DELETE_ON_ERROR:
 
-.PHONY: all prog flash ledchk stat timing clean
+.PHONY: all prog flash ledchk gatesim stat timing clean
