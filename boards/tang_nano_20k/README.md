@@ -476,6 +476,16 @@ address mapping inside those blocks is wrong and some addresses alias,
 which is exactly the shape of what the board does. `sw/ramtest.z80` is the
 test for it, and it walks `8000h + 2^12 = 9000h` among the rest.
 
+Half of that is already ruled out, and cheaply: apicula knows the x1 width
+as a distinct thing. `get_bsram_bitwidth` maps `1` to the attribute value
+`'1'`, `attrids.bsram_attrvals['1']` is `5`, separate from `'2'`, `'4'`,
+`'9'` and `'X36'`, and it reaches `SPA_DATA_WIDTH`/`SPB_DATA_WIDTH`
+(attribute ids 46 and 47) like any other width.  A missing key there would
+raise rather than pass silently.  What is *not* checked is whether the chip
+database carries fuses for that attribute/value pair on this part -- a miss
+there could be silent, and would leave the block at its default width.  That
+is chipdb archaeology, and it wants a board to check the answer against.
+
 
 One lead is worth writing down because it needs no banking to chase. The
 write that dies is to `9002h`; `8002h` is where the prober's own `xor a`
