@@ -613,12 +613,19 @@ changing and the block RAM latching an address.  That is the textbook cure
 for a hold race and it changes nothing, which argues the hold reading is
 wrong too.
 
-**It is the address, not the count.**  Two instructions after the switch
-reach a marker at `8004h`.  A `jp 8040h` taken straight after the switch --
-two instructions, nothing else executed -- does not.  Nor does a marker at
-`800Bh`.  So the boundary is somewhere between **`8004h` and `800Bh`**,
-about eight bytes into the common bank, and what fails past it is plain
-instruction fetch.
+**How far it gets is measured; why, is not.**  A probe that runs
+`out (78h),80h`, then two more instructions, then its marker, is reached --
+ten bytes of code, returning cleanly.  A probe with eight NOPs after the
+switch is not.  Nor is `jp 8040h` taken straight after it.  Nor is one that
+puts ROM back immediately and only then reads high up.
+
+An earlier version of this section called that an address boundary at about
+`8008h`.  **That was wrong, and it is the third claim here to need pulling
+back.**  The `jp` test adds a third instruction, so it changes the count and
+the address together and separates neither.  What is actually established is
+narrower: **a couple of instructions after a bank switch run, and then it
+dies** -- and putting ROM straight back does not save it, so whatever goes
+wrong is already done by then.
 
 **Refresh is not the mechanism either**, which was the best-fitting guess
 and is worth writing down as dead.  The core drives `{I, R}` on the address

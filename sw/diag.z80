@@ -1,18 +1,15 @@
-; Is the M1 refresh address what breaks the common bank?
+; Does a bank switch CORRUPT the common bank, or only break fetches from it?
 ;
-; The core drives {I,R} on the address bus during T3-T4 of every M1, and the
-; RAM's clock enable is tied high, so it latches that address and reads it
-; every instruction.  With I = 0 the refresh address is 00xxh -- the LOW
-; window.  While that holds ROM, a refresh read is harmless to code running
-; in the common bank.  Once it holds RAM, the refresh read goes to the same
-; RAM the fetch needs.
+; Execution past about 8008h fails while a RAM bank is selected.  This puts
+; ROM back inside that safe window -- five instructions, all below 8008h --
+; and only then reads 8040h, where A5h was planted before the copy.  So the
+; read runs with ROM in the low window, where everything is known to work.
 ;
-; So: set I to 80h, which puts the refresh address in the HIGH window
-; alongside the code, and see whether the eight-byte cliff moves.
-;
-;   FAh   a marker at 800Bh is reached with I = 80h, where it was not with
-;         I = 0 -- refresh is the mechanism
-;   FFh   no change; refresh is not it
+;   F5h   8040h still holds A5h: the switch does not damage the common bank,
+;         it only breaks fetches from it while a RAM bank is selected
+;   Fxh   it holds something else, and x is the low nibble -- the switch
+;         wrote over the common bank, which is a write going somewhere it
+;         should not, and that is fixable
 
 LED      equ 0FFh
 BANK_RAM equ 078h
@@ -23,8 +20,6 @@ RAM_BASE equ 080h
 
 start:   di
          ld sp,0FFF0h
-         ld a,080h
-         ld i,a                 ; refresh addresses become 80xxh
          ld hl,bt_start
          ld de,08000h
          ld bc,bt_end-bt_start
@@ -33,15 +28,61 @@ start:   di
 hang:    jr hang
 
 bt_start:                       ; runs at 8000h
-         ld a,RAM_BASE
-         out (BANK_RAM),a
-         nop
-         nop
-         nop
-         nop
-         ld a,0FAh
-         out (LED),a
-         xor a
-         out (BANK_ROM),a
-         ret
+         ld a,RAM_BASE          ; 0
+         out (BANK_RAM),a       ; 2   RAM bank 0 in
+         xor a                  ; 4
+         out (BANK_ROM),a       ; 5   ROM back, still inside the safe window
+         ld a,(08040h)          ; 7   now read the common bank
+         and 00Fh               ; 10
+         or 0F0h                ; 12
+         out (LED),a            ; 14
+         ret                    ; 16
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 0A5h
 bt_end:
