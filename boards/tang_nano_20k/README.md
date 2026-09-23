@@ -395,6 +395,41 @@ and 80h is what `ld de,08000h` leaves in D before the `LDIR` -- so the
 checker's `ld d,0` never ran. It never returns at all: a marker printed
 before `call 08000h` appears and one printed after it does not.
 
+**`B0h` has an exact arithmetic explanation, and it names one address bit.**
+The checker returns its error count in `A`, taken from `D`, and `D` is `80h`
+-- which means `ld d,0` produced `80h` instead of `00h`.  Assemble
+`sw/boot.z80` and look at where that operand lives once the checker is
+copied to `8000h`:
+
+```
+  0E 80 06 02 79 D3 78 32 00 40 EE FF 32 01 40 0C 10 F2 0E 80 06 02 16 00
+                                                              ^^      ^^
+                                                            8013h   8017h
+```
+
+`8017h` is the operand of `ld d,0` and must read `00h`.  `8013h` is the
+operand of `ld c,RAM_BASE` in the read loop and holds `80h`.  And
+`8017h ^ 8013h` is `0004h` -- **a single address bit, bit 2**.
+
+So: RAM address bit 2 stuck low makes the read at `8017h` return `8013h`'s
+byte, `D` becomes `80h`, the error count is `80h`, and the monitor prints
+`80h + '0'` = `B0h`.  That is exactly what the board prints, with nothing
+else assumed.
+
+It fits the rest too.  The checker runs *from* RAM at `8000h`, so a stuck
+address bit corrupts its own instruction stream at every address with that
+bit set -- which is why a prober that survives at `8000h` dies at `8100h`,
+why the failure is deterministic, and why it follows the code rather than
+the placement.  And it is a memory-decode fault, so it would not appear in
+any simulation of the netlist, which is the one thing every experiment here
+has agreed on.
+
+**`sw/ramtest.z80` tests precisely this**, and the prediction is sharp: it
+should report `addr bad bit 2`, and LED **7**.  It walks `8000h + 2^k` for
+every k, so `8004h` aliasing to `8000h` is exactly what it looks for.  It is
+loaded and running on the board.  A **6** instead would falsify all of the
+above and send the search back to the bank logic.
+
 **Every primitive it needs works.** Each of these was run standalone from the
 common bank and came back with the right answer:
 
