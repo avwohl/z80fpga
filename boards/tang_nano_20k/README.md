@@ -49,7 +49,7 @@ wiring at all.
 ## The board
 
 From Sipeed's own constraint files in `sipeed/TangNano-20K-example`, not from
-prose: 27 MHz clock on pin 4; UART to the on-board BL616 debugger on pins 69
+prose: 27 MHz clock on pin 4; UART to the on-board debugger on pins 69
 (tx) and 70 (rx); microSD on 83 (CLK), 82 (CMD), 84 (DAT0), 85 (DAT1), 80
 (DAT2), 81 (DAT3, which is chip select in SPI mode); six active-low LEDs on
 15-20; two buttons on 87 and 88. One USB-C carries both the bitstream and the
@@ -319,7 +319,7 @@ again:
   1 MHz, `pnputil /restart-device` on the FTDIBUS child, the MI_01 interface
   and the parent composite device, and a full `/disable-device` +
   `/enable-device` cycle. All succeeded and re-enumerated cleanly; the UART
-  channel stayed dead. The fault is the board's BL616 bridge, not Windows.
+  channel stayed dead. The fault is the board's bridge, not Windows.
 
 A claim made earlier and since withdrawn: that SRAM programming over JTAG is
 what kills the UART. It is not -- program-then-capture worked repeatedly
@@ -365,7 +365,7 @@ vanished from USB entirely with no error logged anywhere. Two mitigations are
 in place: Windows USB selective suspend was disabled, and `JTAG_FREQ` in the
 Makefile now clocks JTAG at 1 MHz rather than openFPGALoader's default 6 MHz,
 since a marginal FTDI link often holds at the lower rate. Whether either helps
-is unknown. If it stays unreliable the on-board BL616 bridge is the suspect,
+is unknown. If it stays unreliable the on-board bridge is the suspect,
 and reflashing it is a Sipeed exercise rather than anything in this repository.
 
 ## Reading it without a console
@@ -462,10 +462,26 @@ It replaced an earlier staged diagnostic that reported over the console --
 `4000h` in the low banked window read back what was written. That one is
 useless on a board whose console has failed, which is why it was replaced.
 
+**The debugger on this board is an FTDI FT2232, not a BL616.** Earlier notes
+here said BL616, which is what Sipeed uses on some revisions, and it is wrong
+for this one and worth correcting because it points the repair at the wrong
+part. Windows reports `USB\VID_0403&PID_6010`, a composite device whose
+interface 0 is the JTAG side (Zadig puts WinUSB on it, and `openFPGALoader`
+drives it) and whose interface 1 is the console, bound to `FTDIBUS` and
+presented as a COM port. The serial is `2025030317`, date-coded the way
+Sipeed's are, so it is the board's own debugger and not some other adapter.
+
+That changes what a repair looks like. An FT2232's per-channel mode lives in
+a writable EEPROM, so a channel that enumerates as a COM port and passes no
+data is worth checking with FT_PROG before concluding the silicon is gone --
+noting that FT_PROG needs FTDI's own D2XX driver on interface 0, which Zadig
+has replaced with WinUSB, so that has to be put back first. Re-flashing a
+BL616 is not the procedure for this part.
+
 **Its serial channel has failed, and that is now proved rather than
 inferred.** `make beacon` builds a console beacon with no Z80 in it -- a
 counter writing `0x55` to the UART's data port about 103 times a second, so
-the only things in the path are pin 69, the BL616 bridge, the host's COM port
+the only things in the path are pin 69, the bridge, the host's COM port
 and `rtl/soc/uart.sv`. The identical construction earlier in this bring-up
 delivered exactly its designed rate, 258 bytes in 25 s. It now delivers
 **zero bytes in 12 seconds**, where a live channel would give about 1240.
@@ -489,7 +505,10 @@ error, and every USB device reports OK, so the host side is not at fault. Spent 
 successful and none of them any help: Windows USB selective suspend disabled,
 JTAG dropped from 6 MHz to 1 MHz, `pnputil /restart-device` on the FTDIBUS
 child, on the `MI_01` interface and on the parent composite device, a full
-`/disable-device` + `/enable-device` cycle, and `openFPGALoader --reset`. A
+`/disable-device` + `/enable-device` cycle, `openFPGALoader --reset`, DTR and
+RTS asserted in every combination, and **disabling `MI_00` outright** so that
+nothing held the JTAG channel while the console was read -- the two channels
+of an FT2232 are independent, and this confirms it rather than assuming it. A
 physical replug has revived it before and nothing else has.
 
 So the last measurement needs a power cycle, and the diagnostic in flash is
