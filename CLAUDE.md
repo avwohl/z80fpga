@@ -139,9 +139,11 @@ ok` across all eight RAM banks, and console echo over the USB-UART.
 
 **The Tang Nano 20K has too**, 2026-09-23: `banked memory ok` and the prompt,
 reported through the configuration flash because that board's UART bridge is
-dead. Two runs, two flash regions. Its console has never worked and proving
-that took most of a day, so `boards/tang_nano_20k/README.md` is long; the part
-worth reading before touching `rtl/soc/` is the section on the read mux.
+dead. Two runs, two flash regions. Its console worked at first -- the banner
+that started the whole investigation came off it -- and then the bridge died
+for good, which took most of a day to prove rather than assume. So
+`boards/tang_nano_20k/README.md` is long; the part worth reading before
+touching `rtl/soc/` is the section on the read mux.
 
 **And the Icepi Zero**, 2026-09-23, on a **v1.3**: `sw/ledchk.z80` holding 6,
 its BANK CHECK PASSED state, so both RAM banks and execution from the common

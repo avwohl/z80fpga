@@ -68,8 +68,12 @@ held low until the MIG's own `ui_clk_sync_rst` clears.
 
 ## What is not here yet
 
-The Z80 cannot reach this memory. Wiring it in means a cache between the
-core's byte-wide, `clk_en`-paced bus and the AXI port's sixteen-byte beats,
-plus a way to get a ROM image into DDR2 at power-up, since DDR2 is volatile
-and the reset fetch has to come from somewhere. Block RAM or the QSPI flash
-can hold the first bank for that.
+This was written before the Z80 could reach this memory, and it can now:
+`rtl/mem/ddr2_ram.sv` is the cache between the core's byte-wide, `clk_en`-paced
+bus and the AXI port's sixteen-byte beats, and [../romwbw/](../romwbw/) puts
+the 512 KB RAM half in DDR2 and boots CP/M on real hardware out of it. The
+ROM half stays in block RAM for the reason this section gave: DDR2 is volatile
+and the reset fetch has to come from somewhere.
+
+What is still not here is this demo doing any of that -- it exercises the MIG
+on its own, which is what makes it useful when the DDR2 is suspect.

@@ -24,8 +24,12 @@ only an emulator answers, so nothing here ever drives the console and the
 board prints nothing. [docs/romwbw.md](../../../docs/romwbw.md) has the
 ports.
 
-Timing closes at WNS +1.216 ns, 0 of 14909 endpoints failing, using 7243 LUTs
-(11%) and 128 of the 135 block RAM tiles.
+Timing closes at WNS +0.237 ns and WHS +0.060 ns, 0 of 20718 endpoints
+failing, using 15009 LUTs (23.67%), 8934 registers (7.05%) and 128 of the 135
+block RAM tiles. Rebuilt 2026-09-23 after the read-mux change in
+`rtl/soc/z80_soc.sv`; the +1.216 ns this used to quote was RomWBW 3.5.1 and
+two generations of the design ago, and the slack has been tightening, so read
+the number rather than the verdict.
 
 ## Where the memory lives
 

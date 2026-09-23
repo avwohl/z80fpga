@@ -1,12 +1,20 @@
 # Sipeed Tang Nano 20K
 
-Tier (a) builds, and the bitstream has been loaded onto a real board. The
-board prints its banner and then restarts; **the design is not why**. `make
-gatesim` runs the monitor on the synthesised netlist -- the same netlist that
-becomes the bitstream -- and it prints `z80fpga ready`, `banked memory ok` and
-the prompt. The section at the bottom says what that rules out, what is left,
-and how to read the board when its console is dead. The rest of this file is
-the case for the board and the order to take it in, which is unchanged.
+Tier (a) **runs on hardware**: `banked memory ok` and the prompt, reported
+through the configuration flash because this board's USB-UART bridge is dead
+silicon. Two runs, two flash regions.
+
+It took a long time, and the headline above used to read "the board prints its
+banner and then restarts; **the design is not why**." That was wrong. The
+design *was* why: `z80_soc.sv` chose between the ROM's and the RAM's read data
+with a select taken off the live address, while the data behind it came out of
+registered memories a clock later, and on an M1 cycle the refresh address
+arrives at exactly the edge the instruction is latched. It broke instruction
+fetch out of the common bank and nothing else, which is why everything else
+looked fine. The section on the read mux has it.
+
+The rest of this file is the case for the board, the order to take it in, and
+how to read a board whose console is dead -- all of which still stand.
 
 The short version: this is the best tier (b) target of any small board in this
 tree, because it is the only one whose RomWBW-sized memory is already inside
