@@ -11,9 +11,11 @@
 //
 //   * It can only Page Program (02h).  There is no erase command anywhere in
 //     it, so the worst it can do is clear bits in one page.
-//   * The address is a parameter and defaults well past the bitstream, which
-//     is about 7.3 MB; 7F0000h reads back all FFh on this board, so the page
-//     is erased and a program lands cleanly.
+//   * The address comes in with the byte and is latched at start.  Point it
+//     well past the bitstream, which is about 7.3 MB; 7F0000h upwards reads
+//     back all FFh on this board, so those pages are erased and a program
+//     lands cleanly.  A page program can only clear bits, so every distinct
+//     answer wants its own page.
 //   * It ignores MI entirely and never polls the status register.  The gap
 //     after the program is a fixed wait, longer than any page-program time
 //     in the datasheets, because nothing here is in a hurry.
@@ -21,13 +23,13 @@
 // SPI mode 0: MOSI is set while SCLK is low, and the flash samples it on the
 // rising edge.
 module flash_wr #(
-    parameter logic [23:0] ADDR = 24'h7F0000,
     parameter int          HALF = 8            // SCLK half period, in clocks
 ) (
-    input  logic       clk,
-    input  logic       rst_n,
-    input  logic       start,                  // one clock wide
-    input  logic [7:0] data,
+    input  logic        clk,
+    input  logic        rst_n,
+    input  logic        start,                 // one clock wide
+    input  logic [23:0] addr,                  // latched at start
+    input  logic  [7:0] data,
     output logic       cs_n,
     output logic       sclk,
     output logic       mosi,
@@ -50,6 +52,7 @@ module flash_wr #(
   logic [19:0] gap;
   logic        phase;       // 0 = write enable, 1 = page program
   logic  [7:0] hold;
+  logic [23:0] hold_a;
 
   always_ff @(posedge clk) begin
     if (!rst_n) begin
@@ -65,7 +68,8 @@ module flash_wr #(
           cs_n <= 1'b1;
           sclk <= 1'b0;
           if (start) begin
-            hold  <= data;
+            hold   <= data;
+            hold_a <= addr;
             sr    <= {8'h06, 40'h0};              // WREN
             left  <= 6'd8;
             phase <= 1'b0;
@@ -112,7 +116,7 @@ module flash_wr #(
               // left-aligned: the shifter sends sr[47] first, so the
               // payload has to sit at the top or a zero byte goes out ahead
               // of the command
-              sr    <= {8'h02, ADDR, hold, 8'h00};  // page program, one byte
+              sr    <= {8'h02, hold_a, hold, 8'h00};  // page program, one byte
               left  <= 6'd40;
               phase <= 1'b1;
               st    <= 3'd1;

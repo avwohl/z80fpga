@@ -1,24 +1,23 @@
-; How far into sw/boot.z80's checker does it get, marked with I/O only?
+; Once a RAM bank is selected, does the common bank still READ correctly?
 ;
-; Memory writes are the thing under suspicion, so every marker here is
-; `out (0FFh),a` -- an I/O write that touches no memory.  The board top turns
-; the first F0h|n on that port into a flash page program, once, latched, so
-; exactly one marker escapes and it is the furthest one reached.
+; Two instructions after a bank switch reach their marker; eight NOPs, or a
+; jump to 8040h, do not.  So the address matters.  ramtest cleared the
+; address lines -- but it ran with ROM in the low window, which is not the
+; case here.
 ;
-; Established with this channel already: the bank-select OUT survives, and so
-; does a high-window write taken straight after it.  So this runs the whole
-; write loop, which is where the marker-in-memory version said it died.
+; This keeps every instruction low, where execution is known to survive, and
+; reads one byte from 8040h.  A5h is planted there, so the marker says what
+; came back:
 ;
-;   F7h   fetching from the high window while a RAM bank is selected is
-;         fine, so it really is the second write to the bank port
-;   FFh   plain instruction fetch from the high window fails once a RAM
-;         bank is selected, and the bank port has nothing to do with it
+;   F5h   8040h read back A5h -- the data is fine, so it is the FETCH that
+;         fails higher up, not the memory
+;   Fxh   it read something else, and x is the low nibble of what
+;   FFh   it did not even get that far
 
 LED      equ 0FFh
 BANK_RAM equ 078h
 BANK_ROM equ 07Ch
 RAM_BASE equ 080h
-RAM_N    equ 2
 
          org 0000h
 
@@ -31,21 +30,66 @@ start:   di
          call 08000h
 hang:    jr hang
 
-bt_start:
+bt_start:                       ; runs at 8000h
          ld a,RAM_BASE
          out (BANK_RAM),a       ; RAM bank 0 into the low window
-         nop                    ; and then just fetch, from the high window,
-         nop                    ; which the switch does not move
-         nop
-         nop
-         nop
-         nop
-         nop
-         nop
-         ld a,0F7h
-         out (LED),a            ; I/O only
-
+         ld a,(08040h)          ; read the common bank, high up
+         and 00Fh
+         or 0F0h
+         out (LED),a            ; say what came back
          xor a
          out (BANK_ROM),a
          ret
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 000h
+         db 0A5h
 bt_end:

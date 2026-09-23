@@ -613,6 +613,21 @@ changing and the block RAM latching an address.  That is the textbook cure
 for a hold race and it changes nothing, which argues the hold reading is
 wrong too.
 
+**It is the address, not the count.**  Two instructions after the switch
+reach a marker at `8004h`.  A `jp 8040h` taken straight after the switch --
+two instructions, nothing else executed -- does not.  Nor does a marker at
+`800Bh`.  So the boundary is somewhere between **`8004h` and `800Bh`**,
+about eight bytes into the common bank, and what fails past it is plain
+instruction fetch.
+
+That is worth putting beside the `sw/ramtest.z80` result, which walked
+`8000h + 2^k` along every address line and passed.  It ran with **ROM** in
+the low window.  So the common bank decodes correctly while the low window
+holds ROM, and stops decoding correctly a few bytes up once the low window
+holds RAM -- even though nothing in the RTL makes a high-window access
+depend on `cur_bank` at all, and the netlist, the simulations and three
+placements all agree that it does not.
+
 That transition flips `cur_bank[0]`, which is `phys[15]`, which is the block
 RAM's group select -- and the next instruction fetch comes out of that RAM.
 A short `cur_bank -> mux -> AD` path changing on the same edge the block RAM

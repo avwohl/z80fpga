@@ -117,25 +117,33 @@ module top (
   // apart.
   assign led = {hb[23], ~rst_n, ~tx_seen, ~led8[2:0]};
 
-  // The console is dead and the LEDs need eyes, so the answer goes into the
-  // configuration flash instead, where openFPGALoader --dump-flash can read
-  // it.  sw/ramtest.z80 writes F0h|verdict to the LED port once; that is the
-  // trigger, and the byte.  Once only, latched.
-  logic fw_go, fw_done;
+  // The console is dead and the LEDs need eyes, so answers go into the
+  // configuration flash, where openFPGALoader --dump-flash reads them back.
+  // A Z80 program writes F0h|n to the LED port at 0FFh; each distinct n is
+  // programmed once, at 7F0000h + (n << 8), so a single run can report every
+  // marker it reached rather than only the first.  A page program can only
+  // clear bits, which is why each n gets its own page.
+  logic [15:0] seen;
+  logic        fw_go, fw_busy;
+  logic  [3:0] fw_n;
+
   always_ff @(posedge clk)
     if (!rst_n) begin
-      fw_go <= 1'b0; fw_done <= 1'b0;
+      seen  <= 16'h0;
+      fw_go <= 1'b0;
+      fw_n  <= 4'h0;
     end else begin
       fw_go <= 1'b0;
-      if (!fw_done && led8[7:4] == 4'hF) begin
-        fw_go   <= 1'b1;
-        fw_done <= 1'b1;
+      if (led8[7:4] == 4'hF && !seen[led8[3:0]] && !fw_busy && !fw_go) begin
+        fw_go       <= 1'b1;
+        fw_n        <= led8[3:0];
+        seen[led8[3:0]] <= 1'b1;
       end
     end
 
-  flash_wr #(.ADDR (24'h7F0000)) u_fw (
-      .clk (clk), .rst_n (rst_n), .start (fw_go), .data (led8),
-      .cs_n (mspi_cs_n), .sclk (mspi_clk), .mosi (mspi_mosi), .busy ()
+  flash_wr u_fw (
+      .clk (clk), .rst_n (rst_n), .start (fw_go),
+      .addr ({8'h7F, fw_n, 12'h000}), .data ({4'hF, fw_n}),
+      .cs_n (mspi_cs_n), .sclk (mspi_clk), .mosi (mspi_mosi), .busy (fw_busy)
   );
-
 endmodule
