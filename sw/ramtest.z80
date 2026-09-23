@@ -1,0 +1,167 @@
+; Address- and data-line test of the common bank.  No banking at all.
+;
+; Why this exists: on the Tang Nano the checker dies on a write to 9002h
+; taken right after a bank switch, while the same write aimed at 4000h is
+; fine.  9002h and 8002h differ in one address bit, bit 12, and 8002h is
+; where the prober's own `xor a` sits -- so a dropped bit 12 would put A5h
+; over the instruction stream and kill the machine exactly as observed.
+; That is a memory-decode question, not a banking one, and this asks it
+; without a single OUT to the bank port.
+;
+; Walking ones: write a unique value to 8000h + 2^k for every k the window
+; has, then read them all back.  If two addresses alias, one of them reads
+; the other's value and the address line is named in the output.  Then a data
+; walk at one address, for stuck data bits.
+;
+; It reports on the console AND on the LED port, because this board has had
+; neither reliably: 1 running, 6 all passed, 7 an address line failed,
+; 5 a data line failed.
+
+UART_ST  equ 000h
+UART_DAT equ 001h
+LED      equ 0FFh
+BASE     equ 08000h             ; the common bank, which never moves
+
+         org 0000h
+
+start:   di
+         ld sp,0FFF0h
+         ld a,1
+         out (LED),a
+         ld hl,m_hi
+         call puts
+
+         ; --- walking ones on the address lines.  BASE+2^k for k = 1..14,
+         ; each holding k, so an alias reads back the wrong k.
+         ld b,14
+         ld c,1                 ; k
+aw:      push bc
+         call addr_of           ; HL = BASE + 2^k
+         ld (hl),c              ; store k there
+         pop bc
+         inc c
+         djnz aw
+
+         ld a,0AAh
+         ld (BASE),a            ; and a marker at the base itself
+
+         ld b,14
+         ld c,1
+ar:      push bc
+         call addr_of
+         ld a,(hl)
+         cp c                   ; did it keep its own k?
+         jr z,ar1
+         ; mismatch: say which line and what came back
+         push af
+         ld hl,m_abad
+         call puts
+         ld a,c
+         call puthex
+         ld a,' '
+         call putc
+         pop af
+         call puthex
+         call crlf
+         ld a,7
+         out (LED),a
+         pop bc
+         jr dtest
+ar1:     pop bc
+         inc c
+         djnz ar
+
+         ld a,(BASE)            ; the base must still be AAh
+         cp 0AAh
+         jr z,agood
+         ld hl,m_abase
+         call puts
+         call puthex
+         call crlf
+         ld a,7
+         out (LED),a
+         jr dtest
+agood:   ld hl,m_aok
+         call puts
+
+         ; --- walking ones on the data lines, at one address
+dtest:   ld hl,BASE+1
+         ld c,1
+dw:      ld (hl),c
+         ld a,(hl)
+         cp c
+         jr z,dw1
+         push af
+         ld hl,m_dbad
+         call puts
+         ld a,c
+         call puthex
+         ld a,' '
+         call putc
+         pop af
+         call puthex
+         call crlf
+         ld a,5
+         out (LED),a
+         jr done
+dw1:     sla c
+         jr nz,dw
+         ld hl,m_dok
+         call puts
+         ld a,6
+         out (LED),a
+
+done:    ld hl,m_end
+         call puts
+hang:    jr hang
+
+; HL = BASE + (1 << C), for C = 1..14
+addr_of: ld hl,1
+         ld b,c
+ash:     add hl,hl
+         djnz ash
+         ld de,BASE
+         add hl,de
+         ret
+
+putc:    push af
+putc1:   in a,(UART_ST)
+         bit 1,a
+         jr z,putc1
+         pop af
+         out (UART_DAT),a
+         ret
+
+puts:    ld a,(hl)
+         or a
+         ret z
+         call putc
+         inc hl
+         jr puts
+
+crlf:    ld a,0Dh
+         call putc
+         ld a,0Ah
+         jp putc
+
+puthex:  push af
+         rrca
+         rrca
+         rrca
+         rrca
+         call phnib
+         pop af
+phnib:   and 0Fh
+         add a,090h
+         daa
+         adc a,040h
+         daa
+         jp putc
+
+m_hi:    db "ramtest", 0Dh, 0Ah, 0
+m_aok:   db "addr ok", 0Dh, 0Ah, 0
+m_abad:  db "addr bad bit ", 0
+m_abase: db "base bad ", 0
+m_dok:   db "data ok", 0Dh, 0Ah, 0
+m_dbad:  db "data bad ", 0
+m_end:   db "end", 0Dh, 0Ah, 0

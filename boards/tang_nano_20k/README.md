@@ -460,6 +460,20 @@ silicon being flaky. `MEM_WAIT = 1` does not change it either, nor does a
 settling cycle holding `wait_n` low for the clock after any bank-port write.
 
 
+One lead is worth writing down because it needs no banking to chase. The
+write that dies is to `9002h`; `8002h` is where the prober's own `xor a`
+sits, and the two differ in **one address bit, bit 12**. A dropped bit there
+would put `A5h` straight over the instruction stream and kill the machine
+exactly as observed -- deterministically, and differently depending on where
+the code sits. That is a memory-decode question, not a banking one.
+
+`sw/ramtest.z80` asks it, with no `OUT` to the bank port anywhere in it:
+walking ones on the address lines of the common bank, then on the data lines,
+reporting on the console *and* on the LED port -- 6 both passed, 7 an address
+line failed, 5 a data line failed. It is verified against the real netlist in
+a gate-level run, where it says `addr ok` / `data ok` and settles on LED 6, so
+a different answer from the board means the board.
+
 `sw/diag.z80` is in the tree because the next person needs the harness more
 than the conclusion: build it over `top.sv` with `ROM_INIT` pointed at it,
 and it prints. The survive-your-own-crash trick -- a flag and a progress byte
