@@ -620,6 +620,15 @@ two instructions, nothing else executed -- does not.  Nor does a marker at
 about eight bytes into the common bank, and what fails past it is plain
 instruction fetch.
 
+**Refresh is not the mechanism either**, which was the best-fitting guess
+and is worth writing down as dead.  The core drives `{I, R}` on the address
+bus during T3-T4 of every M1 (`z80_core.sv`, `a = (tcnt >= 3) ? {rI, rR} :
+rPC`), and the RAM's clock enable is tied high, so it latches that address
+and reads it once per instruction.  With `I = 0` those reads land in the low
+window -- harmless while it holds ROM, and into the same RAM the fetch needs
+once it holds a bank.  Setting `I` to `80h`, so the refresh address sits in
+the high window beside the code, changes nothing at all.
+
 That is worth putting beside the `sw/ramtest.z80` result, which walked
 `8000h + 2^k` along every address line and passed.  It ran with **ROM** in
 the low window.  So the common bank decodes correctly while the low window

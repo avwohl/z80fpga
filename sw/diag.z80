@@ -1,18 +1,18 @@
-; Once a RAM bank is selected, does the common bank still READ correctly?
+; Is the M1 refresh address what breaks the common bank?
 ;
-; Two instructions after a bank switch reach their marker; eight NOPs, or a
-; jump to 8040h, do not.  So the address matters.  ramtest cleared the
-; address lines -- but it ran with ROM in the low window, which is not the
-; case here.
+; The core drives {I,R} on the address bus during T3-T4 of every M1, and the
+; RAM's clock enable is tied high, so it latches that address and reads it
+; every instruction.  With I = 0 the refresh address is 00xxh -- the LOW
+; window.  While that holds ROM, a refresh read is harmless to code running
+; in the common bank.  Once it holds RAM, the refresh read goes to the same
+; RAM the fetch needs.
 ;
-; This keeps every instruction low, where execution is known to survive, and
-; reads one byte from 8040h.  A5h is planted there, so the marker says what
-; came back:
+; So: set I to 80h, which puts the refresh address in the HIGH window
+; alongside the code, and see whether the eight-byte cliff moves.
 ;
-;   F5h   8040h read back A5h -- the data is fine, so it is the FETCH that
-;         fails higher up, not the memory
-;   Fxh   it read something else, and x is the low nibble of what
-;   FFh   it did not even get that far
+;   FAh   a marker at 800Bh is reached with I = 80h, where it was not with
+;         I = 0 -- refresh is the mechanism
+;   FFh   no change; refresh is not it
 
 LED      equ 0FFh
 BANK_RAM equ 078h
@@ -23,6 +23,8 @@ RAM_BASE equ 080h
 
 start:   di
          ld sp,0FFF0h
+         ld a,080h
+         ld i,a                 ; refresh addresses become 80xxh
          ld hl,bt_start
          ld de,08000h
          ld bc,bt_end-bt_start
@@ -32,64 +34,14 @@ hang:    jr hang
 
 bt_start:                       ; runs at 8000h
          ld a,RAM_BASE
-         out (BANK_RAM),a       ; RAM bank 0 into the low window
-         ld a,(08040h)          ; read the common bank, high up
-         and 00Fh
-         or 0F0h
-         out (LED),a            ; say what came back
+         out (BANK_RAM),a
+         nop
+         nop
+         nop
+         nop
+         ld a,0FAh
+         out (LED),a
          xor a
          out (BANK_ROM),a
          ret
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 000h
-         db 0A5h
 bt_end:
