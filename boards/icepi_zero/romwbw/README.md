@@ -109,11 +109,11 @@ slot, the card or the wiring rather than anything here.
 ## What it builds to
 
 ```
-TRELLIS_COMB    7456 / 24288   30%
-TRELLIS_FF      1094 / 24288    4%
+TRELLIS_COMB    7521 / 24288   30%
+TRELLIS_FF      1099 / 24288    4%
 DP16KD             3 /    56    5%
-TRELLIS_IO        56 /   197   28%
-Max frequency for clock 'clk_sys': 28.82 MHz (PASS at 25.00 MHz)
+TRELLIS_IO        57 /   197   28%
+Max frequency for clock 'clk_sys': 26.95 MHz (PASS at 25.00 MHz)
 ```
 
 Three EBRs of the 56 — the core's dispatch table and `sd_spi`'s sector buffer,

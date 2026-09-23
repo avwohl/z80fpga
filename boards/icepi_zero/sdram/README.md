@@ -40,12 +40,12 @@ enough for the boot monitor, which is what this build runs — and the RAM, all
 ## What it builds to
 
 ```
-TRELLIS_COMB    6371 / 24288   26%
-TRELLIS_FF       515 / 24288    2%
+TRELLIS_COMB    6187 / 24288   25%
+TRELLIS_FF       520 / 24288    2%
 DP16KD            16 /    56   28%
-TRELLIS_IO        49 /   197   24%
+TRELLIS_IO        50 /   197   25%
 SIOLOGIC           1 /    69    1%      (the ODDR on sdram_clk)
-Max frequency for clock 'clk_sys': 29.13 MHz (PASS at 25.00 MHz)
+Max frequency for clock 'clk_sys': 28.27 MHz (PASS at 25.00 MHz)
 ```
 
 Moving 64 KB of RAM out of the EBRs gives 32 of them back, at the cost of 169

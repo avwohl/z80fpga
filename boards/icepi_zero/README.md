@@ -149,11 +149,11 @@ it is a 21-byte symlink stub pointing at `../firmware/README.md`.
 ## What it builds to
 
 ```
-TRELLIS_COMB    6202 / 24288   25%
-TRELLIS_FF       419 / 24288    1%
+TRELLIS_COMB    6111 / 24288   25%
+TRELLIS_FF       424 / 24288    1%
 DP16KD            48 /    56   85%
-TRELLIS_IO        10 /   197    5%
-Max frequency for clock 'clk_sys': 28.57 MHz (PASS at 25.00 MHz)
+TRELLIS_IO        11 /   197    5%
+Max frequency for clock 'clk_sys': 29.67 MHz (PASS at 25.00 MHz)
 ```
 
 Logic is not the constraint on this part; block RAM is. 48 of the 56 EBRs go
