@@ -394,10 +394,22 @@ It replaced an earlier staged diagnostic that reported over the console --
 `4000h` in the low banked window read back what was written. That one is
 useless on a board whose console has failed, which is why it was replaced.
 
-**Its serial channel has failed.** JTAG is perfectly healthy -- `idcode 0x81b`,
-`GW2A(R)-18(C)`, and `openFPGALoader` reports `DONE` on every load -- while the
-UART delivers nothing. COM7 enumerates, opens without error, and every USB
-device reports OK, so the host side is not at fault. Spent on it, all
+**Its serial channel has failed, and that is now proved rather than
+inferred.** `make beacon` builds a console beacon with no Z80 in it -- a
+counter writing `0x55` to the UART's data port about 103 times a second, so
+the only things in the path are pin 69, the BL616 bridge, the host's COM port
+and `rtl/soc/uart.sv`. The identical construction earlier in this bring-up
+delivered exactly its designed rate, 258 bytes in 25 s. It now delivers
+**zero bytes in 12 seconds**, where a live channel would give about 1240.
+
+So the bridge is dead as a hardware matter and no change to this repository
+can revive it. Run `make beacon` before believing anything a silent console
+seems to say about the design: it separates a broken link from a broken
+build, which is a distinction most of a day went into re-learning.
+
+JTAG is meanwhile perfectly healthy -- `idcode 0x81b`, `GW2A(R)-18(C)`, and
+`openFPGALoader` reports `DONE` on every load. COM7 enumerates, opens without
+error, and every USB device reports OK, so the host side is not at fault. Spent on it, all
 successful and none of them any help: Windows USB selective suspend disabled,
 JTAG dropped from 6 MHz to 1 MHz, `pnputil /restart-device` on the FTDIBUS
 child, on the `MI_01` interface and on the parent composite device, a full

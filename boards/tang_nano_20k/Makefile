@@ -156,6 +156,20 @@ ledchk.fs: $(filter-out top.sv,$(SRC)) ledchk_top.sv ledchk.hex \
 ledchk: ledchk.fs
 	openFPGALoader -b tangnano20k --freq $(JTAG_FREQ) $<
 
+# `make beacon` builds and loads a console beacon with no Z80 in it: a counter
+# writes 0x55 to the UART's data port about 103 times a second.  It isolates
+# pin 69, the BL616 bridge, the host's COM port and rtl/soc/uart.sv from
+# everything else, so a capture either proves the channel alive or convicts
+# it.  Run it before believing anything a silent console seems to say about
+# the design -- that is what it was written for, and what it settled.
+beacon.fs: beacon.sv $(ROOT)/rtl/soc/uart.sv $(CST)
+	yosys -p "read_verilog -sv -I $(ROOT)/rtl/core $(ROOT)/rtl/soc/uart.sv 	          beacon.sv; 	          synth_gowin -family $(SYNFAM) -top $(TOP) -json beacon.json" 	      -l beacon_yosys.log
+	nextpnr-himbaechel --device $(DEVICE) --vopt family=$(FAMILY) 	                   --vopt cst=$(CST) --json beacon.json 	                   --write beacon_pnr.json --freq $(FREQ) -l beacon_pnr.log
+	gowin_pack -d $(FAMILY) -o $@ beacon_pnr.json
+
+beacon: beacon.fs
+	openFPGALoader -b tangnano20k --freq $(JTAG_FREQ) $<
+
 # -f is --write-flash.  Without it openFPGALoader writes SRAM, which is the
 # default and is gone at power down.  Plain -f is what this part wants: the
 # GW2AR has no internal flash, so there is nothing for --external-flash to
@@ -210,6 +224,7 @@ clean:
 	rm -f z80fpga.json z80fpga_pnr.json z80fpga.fs *.log $(MEMS)
 	rm -f ledchk.json ledchk_pnr.json ledchk.fs ledchk.hex ledchk_top.sv
 	rm -f gatesim.v gatesim_cells.v gatesim.vvp
+	rm -f beacon.json beacon_pnr.json beacon.fs
 
 # nextpnr writes the post-route netlist even when timing fails, and then exits
 # 1.  Without this, the next make would find a newer _pnr.json than .json,
@@ -217,4 +232,4 @@ clean:
 # without a word.
 .DELETE_ON_ERROR:
 
-.PHONY: all prog flash ledchk gatesim stat timing clean
+.PHONY: all prog flash ledchk beacon gatesim stat timing clean

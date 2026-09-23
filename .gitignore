@@ -32,6 +32,8 @@ boards/*/ledchk_top.sv
 boards/*/gatesim.v
 boards/*/gatesim_cells.v
 boards/*/gatesim.vvp
+boards/*/beacon.json
+boards/*/beacon_pnr.json
 boards/*/*/*.json
 boards/*/*/*.bit
 boards/*/*/*.config
