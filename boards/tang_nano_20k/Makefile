@@ -188,8 +188,13 @@ loopback: loopback.fs
 # default and is gone at power down.  Plain -f is what this part wants: the
 # GW2AR has no internal flash, so there is nothing for --external-flash to
 # choose between.
+# --verify reads the flash back and compares.  It is cheap next to the write
+# and it removes a whole class of wasted afternoon: on a board whose console
+# has failed, "is it even running the image I think it is" is otherwise a
+# question with no answer.  Checked by hand once before this was added --
+# 32768 bytes at offset 0x20000, 32037 of them not padding, all matching.
 flash: z80fpga.fs
-	openFPGALoader -b tangnano20k --freq $(JTAG_FREQ) -f $<
+	openFPGALoader -b tangnano20k --freq $(JTAG_FREQ) -f --verify $<
 
 # `make gatesim` runs the console bench against the SYNTHESISED netlist
 # rather than the RTL, which is the only simulation that can see what
