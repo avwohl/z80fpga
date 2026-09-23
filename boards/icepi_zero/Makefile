@@ -71,6 +71,32 @@ prog: z80fpga.bit
 flash: z80fpga.bit
 	openFPGALoader -b icepi-zero $< --write-flash
 
+# The bank check that reports on the LEDs instead of the console, which is how
+# this board was first proved: on Windows the programmer and the COM port
+# cannot be bound at the same time, so the first run has no console to print
+# to.  It holds its verdict rather than passing through it -- 6 is BANK CHECK
+# PASSED, 7 is a bank read back wrong -- where sw/boot.z80 shows the verdict
+# for about 1.6 ms and then moves on to the prompt.  D1..D5 are led[0]..led[4]
+# in board order and lit is 1, so 6 is the middle two lamps of the five.
+ledchk.hex: $(ROOT)/sw/ledchk.z80
+	python $(ROOT)/tools/zasm.py $< -o $@ --size 32768
+
+ledchk_top.sv: top.sv
+	sed 's|"boot.hex"|"ledchk.hex"|' $< > $@
+
+ledchk.json: $(filter-out top.sv,$(SRC)) ledchk_top.sv z80_ucode.mem z80_dispatch.mem ledchk.hex
+	yosys -p "read_verilog -sv -I $(ROOT)/rtl/core $(filter-out top.sv,$(SRC)) ledchk_top.sv; 	          synth_ecp5 -top $(TOP) -json $@" -l ledchk_yosys.log
+
+ledchk.config: ledchk.json $(LPF)
+	nextpnr-ecp5 --$(DEVICE) --package $(PACKAGE) --speed $(SPEED) 	             --lpf $(LPF) --json $< 	             --textcfg $@ --freq $(FREQ) -l ledchk_nextpnr.log
+	@grep -q "constraining clock net 'clk_sys'" ledchk_nextpnr.log || { echo "the clk_sys constraint never applied - see ledchk_nextpnr.log"; exit 1; }
+
+ledchk.bit: ledchk.config
+	ecppack --compress $< $@
+
+ledchk: ledchk.bit
+	openFPGALoader -b icepi-zero $<
+
 # The device utilisation table, which is the one after packing.  nextpnr also
 # prints a "Total LUT4s" line, but that is "Logic utilisation before packing"
 # and it is a smaller number -- quoting it next to the rest of the table would
@@ -82,11 +108,11 @@ timing: z80fpga.config
 	@grep -E "constraining clock net|Max frequency|Max delay" nextpnr.log
 
 clean:
-	rm -f z80fpga.json z80fpga.config z80fpga.bit *.log $(MEMS)
+	rm -f z80fpga.json z80fpga.config z80fpga.bit *.log $(MEMS) \n	      ledchk.json ledchk.config ledchk.bit ledchk.hex ledchk_top.sv
 
 # nextpnr writes the textcfg even when timing fails, and then exits 1.  Without
 # this, the next make would find a newer .config than .json, skip nextpnr
 # entirely, and pack the failing placement into a bitstream without a word.
 .DELETE_ON_ERROR:
 
-.PHONY: all prog flash stat timing clean
+.PHONY: all prog flash ledchk stat timing clean

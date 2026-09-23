@@ -18,12 +18,25 @@ The part number is from
 `hardware/v1.0/icepi-zero.kicad_sch`, and every pin in the `.lpf` is from that
 repository's `gateware/icepi-zero.lpf`.
 
-## Which revision these files are for, which is not v1.1
+## Which revision these files are for: v1.2 onward, and verified on a v1.3
 
 `gateware/icepi-zero.lpf` upstream is a **symlink**, and it has been retargeted
 twice. When these files were written it resolved to `v1.3/icepi-zero-v1_3.lpf`;
 it now points at v1.4. So the pins here are v1.3/v1.4 pins, and the sentence
 above, while true as written, names a path that does not say so.
+
+Checked ball by ball against every upstream revision on 2026-09-23, which
+sharpens that: **v1.3 and v1.4 are pin-identical** -- the only difference in
+126 constraints is that v1.4 *adds* `programn` on N12, matching its changelog.
+And almost nothing here is v1.3-specific. The LED, button and SD pins are
+**v1.2 onward**; the v1.2-to-v1.3 diff is exactly two lines, `clk` M2 to M1 and
+`gpio[23]` M1 to M2. So the clock is the only pin that makes these files v1.3
+rather than v1.2.
+
+Against upstream v1.3 the three `.lpf` files here match on **every one of 115
+signals, zero mismatches**. `sd_dat1`/`sd_dat2` are spelled `sd_dat[1]`/
+`sd_dat[2]` upstream and sit on the same balls, R14 and M15; that is a naming
+difference and not a discrepancy.
 
 **On a v1.0 or v1.1 board this design will configure, assert DONE, and do
 nothing.** The 50 MHz oscillator is on **M2** there and on **M1** from v1.3
@@ -33,13 +46,21 @@ that is not connected to anything. `LOCATE COMP "clk" SITE "M1";` therefore
 binds the clock to a floating pin. It is the same failure as loading an Arty
 bitstream on a Nexys, and it looks the same from outside.
 
-Two other things differ and one of them will waste a debugging session:
+Two other things differ, and both moved at **v1.2**, not v1.3 -- so they bite a
+v1.0 or v1.1 board and nothing later:
 
-- `led[0]`, `led[1]`, `led[2]` are E13/E12/… here and **E14/E15/D14** on v1.1.
-  E13 and E12 are unconnected balls on a v1.1, so a perfectly working RomWBW
-  build would show exactly the LED signature the romwbw README tells you means
-  "stopped at SDRAM init".
-- `sd_clk` and `sd_mosi` are swapped: **N16** and **P15** on v1.1.
+- `led[0]`, `led[1]`, `led[2]` are **E13/D14/E12** here and **E14/E15/D14** on
+  v1.1. (`led[0]` went F16 on v1.0, E14 on v1.1, E13 from v1.2; `led[3]` C13
+  and `led[4]` D13 never moved.) E13 and E12 are unconnected balls on a v1.1,
+  so a perfectly working RomWBW build would show exactly the LED signature the
+  romwbw README tells you means "stopped at SDRAM init". Note which lamp
+  survives: on a v1.1 this design's `led[1]` lands on D14, which *is* a real
+  LED there, so the board looks half alive rather than dead.
+- **`sd_clk` and `sd_cmd`** exchange **N16** and **P15** at v1.2 -- v1.0 and
+  v1.1 have `sd_clk` on N16, v1.2 onward on P15. This used to say `sd_clk` and
+  `sd_mosi`, which cannot be right: `sd_mosi`, `sd_miso` and `sd_csn` are SPI
+  *aliases* that upstream only added at v1.2 ("Added aliases for sd card
+  pins"), so on a v1.1 board `sd_mosi` does not exist to be swapped with.
 
 The SDRAM bus is identical across every revision — all 39 sites, checked ball
 by ball — and so are the part number, the console pins and the JTAG wiring.
@@ -51,8 +72,10 @@ has no second button — so a v1.1 file is a v1.1 file, not a "v1.0/v1.1" one.
 Nothing here is hard to fix: four `LOCATE` lines in `icepi_zero.lpf` and
 `sdram/icepi_zero_sdram.lpf`, six in `romwbw/icepi_zero_romwbw.lpf`, and a
 `REV ?=` variable in the three Makefiles so the question is asked once per
-build. It has not been done because no Icepi Zero of any revision has yet run
-this design on hardware.
+build. It still has not been done, but the reason has changed: a **v1.3 board
+now runs this design** (see below), and no v1.0 or v1.1 board is on hand to
+test a back-port against. Writing untested `LOCATE` lines for a board nobody
+here has is how the wrong pins get believed.
 
 ## Build
 
@@ -69,18 +92,59 @@ mingw32-make flash      # into the board's SPI flash; survives
 the same USB-C socket carries the console:
 
 ```
-powershell -ExecutionPolicy Bypass -File ../../tools/console.ps1 -Port COM4
+powershell -ExecutionPolicy Bypass -File ../../tools/console.ps1 -Port COM9
 ```
 
-One caveat that is worth knowing before it is confusing: the FT231X is a
-single-channel part, so the bit-banged JTAG and the console are the *same* USB
-interface, and only one thing can hold it at a time. Close the terminal before
-`mingw32-make prog`, and reopen it afterwards. On Windows the driver choice
-makes that sharper — the vendor's instructions have you swap the FTDI to
-WinUSB with [Zadig](https://zadig.akeo.ie/) for the browser loader, and a
-device on WinUSB is not a COM port any more. None of this has been tried here;
-[cheyao/icepi-zero](https://github.com/cheyao/icepi-zero)'s
-`documentation/PROGRAMMING.md` is the authority.
+### Which USB-C, and it is not obvious
+
+The board has **three** USB-C sockets and neither the vendor README nor the
+Crowd Supply page says which does what. **Use the one nearest the HDMI.**
+
+Traced through `hardware/v1.3/usb.kicad_sch` and `production/positions.csv`:
+J3, J4 and J5 all sit on the same edge at Y = -13.0 mm, and the mini-HDMI
+(J2, a GPDI connector) is at X = -21.6 mm on that same end.
+
+- **J5**, X = **-6.0 mm**, nearest the HDMI. Its `D+` (A6/B6) and `D-`
+  (A7/B7) go straight to **U9 FT231XQ pins 8 (USBDP) and 9 (USBDM)**. This is
+  the one. JTAG and console both.
+- **J3**, X = +6.5 mm, middle. Data pair goes through ESD diodes to the
+  **ECP5** at balls F15/E16.
+- **J4**, X = +19.0 mm, farthest. Same, to ECP5 balls J16/J15.
+
+J3 and J4 are the FPGA's own USB ports; nothing in this SoC uses them. All
+three `VBUS` pins are on one `+5V` net, so any socket will *power* the board —
+which is the trap. A board plugged into J3 lights up and is completely
+unreachable.
+
+### On Windows you cannot have the programmer and the console at once
+
+The FT231X is a single-channel part, so the bit-banged JTAG and the console
+are the *same* USB interface, and one driver owns it:
+
+- bound to **FTDI VCP** (`FTDIBUS`/`FTSER2K`) you get a COM port and a working
+  console, and `openFPGALoader` fails with
+  `Error code -12 Operation not supported or unimplemented on this platform` —
+  that -12 is libusb's way of saying "wrong driver", not a broken cable;
+- bound to **WinUSB** `openFPGALoader` works and **the COM port disappears**.
+
+To program, swap it with [Zadig](https://zadig.akeo.ie/): *Options → List All
+Devices* first, or the device will not be in the dropdown at all, because
+Zadig hides devices that already have a driver. Pick the entry whose **USB ID
+is `0403 6015`** (an FT231X; it shows as `USB Serial Converter` on VCP and
+`FT231X USB UART` on WinUSB) and replace the driver with WinUSB. Going back is
+Device Manager → Update driver → *Let me pick* → **USB Serial Converter**;
+Zadig will not undo it.
+
+Verified working on 2026-09-23: after the swap, `openFPGALoader -b icepi-zero
+--detect` returns `idcode 0x41111043`, `lattice`, `ECP5`, `LFE5U-25`.
+
+So to end up with a running board *and* a console, use `mingw32-make flash`
+rather than `prog` — flash survives the power cycle, so you can put the VCP
+driver back afterwards and the design is still there. `prog` loads SRAM only
+and is the faster loop while you are iterating on the bitstream.
+
+Upstream's `documentation/PROGRAMMING.md` is not the authority it looks like:
+it is a 21-byte symlink stub pointing at `../firmware/README.md`.
 
 ## What it builds to
 
@@ -162,14 +226,33 @@ teeth — the build stops with `the clk_sys constraint never applied`, and
 `.DELETE_ON_ERROR:` takes the untimed `z80fpga.config` away with it so the
 next `make` cannot quietly pack it into a bitstream.
 
-## Untested on hardware
+## It runs, 2026-09-23
 
-This is verified to a placed, routed, timing-closed bitstream and no further.
-The SoC itself is verified in simulation (`make test` at the repository root),
-and the pinout is the vendor's own, but no Icepi Zero has run this.
+**An Icepi Zero v1.3 passes the bank check on hardware.** `sw/ledchk.z80`
+held **6** -- `led[2:1]` lit, `led[0]`, `led[3]` and `led[4]` dark -- which is
+its terminal BANK CHECK PASSED state: RAM bank `80h` selected and written,
+`81h` selected and written, both read back, every byte matching. `7` would
+have been a bank reading back wrong and shows one more lamp.
 
-If it is silent, the Nexys A7 README's advice applies here too: bisect with a
-design that has no CPU in it at all. `make` in `gateware/blinky` from the
+That one lamp pattern carries the whole stack: the ECP5 bitstream, the 25 MHz
+clock with `constraining clock net 'clk_sys' to 25.00 MHz` in the log, the Z80
+core, the banked MMU, both RAM banks, and execution from the common bank at
+`8000h` -- the bank checker cannot run from ROM, so `6` means the copy to
+`8000h` ran there and returned.
+
+Read the lamps by position, not by guesswork. D1 through D5 are `led[0]`
+through `led[4]` in board order, anodes through R1-R5 with common cathodes, so
+**lit = 1**, and the row sits at the opposite end of the board from the HDMI.
+There is a free check on any reading: `ledchk` only ever writes 1 to 7, so a
+pattern that decodes above 7 means you are reading the row backwards.
+
+**Not yet shown on hardware:** the console. `ledchk.z80` never touches the
+UART, and on Windows the console and the programmer cannot be bound at the
+same time -- see the driver note under Build. The SDRAM and RomWBW variants
+are also still bitstream-only.
+
+If a future board is silent, the Nexys A7 README's advice applies here too:
+bisect with a design that has no CPU in it at all. `make` in `gateware/blinky` from the
 vendor repository builds and loads one, which proves the cable, the driver and
 the board in a step, and `gateware/uart` proves K15 and the baud rate on top
 of that. Both use the same `openFPGALoader -b icepi-zero` this Makefile does.

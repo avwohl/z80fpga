@@ -143,7 +143,14 @@ dead. Two runs, two flash regions. Its console has never worked and proving
 that took most of a day, so `boards/tang_nano_20k/README.md` is long; the part
 worth reading before touching `rtl/soc/` is the section on the read mux.
 
-Those two. The Arty flow is verified to a placed, routed, timing-closed
+**And the Icepi Zero**, 2026-09-23, on a **v1.3**: `sw/ledchk.z80` holding 6,
+its BANK CHECK PASSED state, so both RAM banks and execution from the common
+bank are good at 25 MHz -- the fastest Z80 of any target here. Its console is
+not shown yet, because on Windows the FT231X cannot be bound to the programmer
+and to a COM port at the same time; that board's README has the detail, and
+also which of its three USB-C sockets is the one that talks.
+
+Those three. The Arty flow is verified to a placed, routed, timing-closed
 bitstream and no further; keep the two kinds of claim apart rather than
 letting a hardware result leak onto a board nobody has plugged in.
 
