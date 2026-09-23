@@ -145,6 +145,13 @@ module top_romwbw (
   );
 
   // The bring-up sequence, then whatever the firmware is saying.
-  assign led = {rom_failed, rom_done, sdram_ready, ~sd_det, led8[0]};
+  // Before the image is staged the lamps are the loader's; afterwards they are
+  // the Z80's.  They cannot be both: five lamps, four loader signals and a
+  // three-bit progress code from sw/boot.z80 and sw/ledchk.z80, and giving
+  // the Z80 only led8[0] meant a staged-but-wedged machine looked exactly
+  // like a staged-and-happy one.  led[3] stays lit once the ROM is in, so a
+  // glance still says which half of the story you are reading.
+  assign led = rom_done ? {1'b0, 1'b1, led8[2:0]}
+                        : {rom_failed, 1'b0, sdram_ready, ~sd_det, 1'b0};
 
 endmodule

@@ -123,11 +123,13 @@ rather than trying to make one engine cover both bus models.
 - **A RomWBW image actually through the Icepi Zero's loader.**
   `boards/icepi_zero/romwbw/` stages the ROM off the microSD card into SDRAM
   and `sim/tb_romload.sv` proves the mechanism, but with a 2 KB boot monitor
-  as the image. No RomWBW `.rom` has been through that path, in simulation or
-  otherwise, and no Icepi Zero has run any of it. The 512 KB case differs from
-  the 2 KB one only in the block count, which is a parameter -- but "only"
-  is doing work there, and a bench that stages the real image would be worth
-  the runtime.
+  as the image. The 512 KB case now has its own bench --
+  `make test-romwbw512 ROMWBW_ROM=path/to/image.rom` builds the same bench
+  with `ROMWBW512` defined, stages 1024 blocks and compares the chip against
+  the card byte for byte -- so "only the block count differs" is no longer
+  taken on trust. What is still open is the hardware half: the Icepi Zero's
+  base and `sdram/` builds run, but `romwbw/` has never been loaded, because
+  that needs a microSD card in the slot.
 - **A bus grant, so the loader need not borrow the reset.** The core is held
   in reset while the image is staged, which is simple and correct and means
   the loader owns the memory by default. A real BUSRQ/BUSAK would let a

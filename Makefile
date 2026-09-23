@@ -73,6 +73,18 @@ ROMLOAD := rtl/mem/sdram_ram.sv rtl/soc/rom_loader.sv rtl/soc/sd_spi.sv \
 sim/tb_romload.vvp: sim/tb_romload.sv $(ROMLOAD) $(SOC) $(GEN) sim/boot2k.hex
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_romload.sv $(SOC) $(ROMLOAD)
 
+# The same bench with the real 512 KB RomWBW image instead of the 2 KB
+# monitor.  Not in `sim`: it is 1024 blocks over SPI and takes minutes rather
+# than seconds, and it needs sim/romwbw512k.hex, which the rule below builds
+# from an image this repository does not carry --
+#
+#   mingw32-make test-romwbw512 ROMWBW_ROM=sim/SBC_simh_std.rom
+sim/tb_romload512.vvp: sim/tb_romload.sv $(ROMLOAD) $(SOC) $(GEN) sim/romwbw512k.hex
+	$(IVERILOG) -g2012 -I rtl/core -DROMWBW512 -o $@ sim/tb_romload.sv $(SOC) $(ROMLOAD)
+
+test-romwbw512: sim/tb_romload512.vvp
+	$(VVP) $<
+
 # Boot a stock RomWBW ROM.  The image is not in the repository; ROMWBW_ROM
 # points at one, the way Z80_TESTS points at the opcode suite:
 #
@@ -176,4 +188,4 @@ clean:
 
 FORCE:
 
-.PHONY: all gen boot sim romwbw test test-full lint synth clean FORCE
+.PHONY: all gen boot sim romwbw test test-full test-romwbw512 lint synth clean FORCE

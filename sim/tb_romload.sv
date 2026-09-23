@@ -23,10 +23,27 @@ module tb_romload;
   localparam int          CLK_HZ    = 25_000_000;
   localparam int          BAUD      = 3_125_000;
   localparam int          DIV       = CLK_HZ / BAUD;
+  // Two sizes, picked at compile time.  The default is the 2 KB monitor, which
+  // runs in seconds and can be asserted on hard: the Z80 is asked to execute
+  // what was staged.  `+define+ROMWBW512` stages the real 512 KB RomWBW image
+  // instead -- the case the roadmap kept calling out as never having been
+  // through this path in simulation or otherwise, on the grounds that "only
+  // the block count differs" was doing a lot of work in that sentence.
+  //
+  // The big run checks the staging and stops there.  A RomWBW image is not
+  // this repository's monitor: it prints its own things on its own schedule,
+  // so the console assertions below would be asserting on somebody else's
+  // firmware.  What has never been tested is whether 1024 blocks arrive
+  // intact, and that is exactly what the byte-for-byte compare answers.
+`ifdef ROMWBW512
+  localparam int          BLOCKS    = 1024;               // 512 KB of image
+  localparam              IMG_FILE  = "sim/romwbw512k.hex";
+`else
   localparam int          BLOCKS    = 4;                  // 2 KB of image
+  localparam              IMG_FILE  = "sim/boot2k.hex";
+`endif
   localparam int          IMG       = BLOCKS * 512;
   localparam logic [31:0] LBA       = 32'h0040_0000;      // clear of both HDSK units
-  localparam              IMG_FILE  = "sim/boot2k.hex";
 
   logic       clk = 0, rst_n = 0;
   logic       uart_rx = 1, uart_tx;
@@ -191,6 +208,16 @@ module tb_romload;
           $finish;
         end
         $display("the image in the chip matches the one on the card");
+
+`ifdef ROMWBW512
+        // Staging is the whole question here; see the header.  Report what the
+        // image says for itself, but do not assert on it.
+        $display("--- console, for information only ---");
+        repeat (DIV * 4000) @(posedge clk);
+        $display("%0d characters out of a RomWBW image", nrx);
+        $display("PASS: %0d blocks staged off the card into SDRAM, byte for byte", BLOCKS);
+        $finish;
+`endif
 
         $display("--- console ---");
         wait (nrx >= 35);
