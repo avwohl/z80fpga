@@ -166,12 +166,27 @@ while **every** access to data memory failed, which reads like a broken block
 RAM and is not one. With `CPU_DIV = 1` a throwaway image that stores `0A5h`
 at `0FFF0h` and reads it back returned the right nibble 8904 times running.
 
-What is left is the bank check, and it is narrowed a long way. The banner
-prints and then the monitor restarts, looping on the banner -- about 270 times
-a second, which is a crash running through the mirrored ROM and wrapping to
-zero, not a USB dropout. Two throwaway images reported on the LEDs rather than
-the console, because the serial channel on this board dies while JTAG stays
-up, and between them they cleared both prime suspects: **`LDIR` completes and
+What was taken to be left is the bank check. The capture that says so is a
+14-second one holding 3851 copies of `z80fpga ready` and no `banked memory
+ok`, read at the time as the monitor crashing and restarting -- a run through
+the mirrored ROM wrapping to zero, about 270 times a second.
+
+**That reading should not be trusted, and the reason arrived late.** The
+channel it came off is now proved dead in hardware by `make beacon`, and this
+same link is already recorded below as having delivered 4133 bytes in eight
+seconds from a design that sends 13. A bridge that fabricates bytes can
+replay a buffer, and 3851 byte-identical 15-byte blocks is exactly the shape
+that would take. The one piece of evidence that the machine misbehaves comes
+from an instrument since shown to be broken and already shown to invent data.
+
+It may still be true. But nothing else supports it: the monitor runs
+correctly on a gate-level simulation of the netlist that becomes the
+bitstream, bank check included, and every other suspect in this file has been
+cleared. `make ledchk` is how to settle it without the console, and it does
+not depend on the link at all.
+
+Two throwaway images did report on the LEDs rather than the console, and
+between them they cleared both prime suspects: **`LDIR` completes and
 `CALL 08000h` executes out of RAM and returns.**
 
 So the remaining suspect is the one path nothing else exercises: the MMU's
