@@ -9,9 +9,10 @@
 ; does a high-window write taken straight after it.  So this runs the whole
 ; write loop, which is where the marker-in-memory version said it died.
 ;
-;   F5h   a RAM-to-RAM bank switch survives
-;   FFh   it does not, and that is the one thing the loop does that no
-;         single-shot probe ever did
+;   F7h   fetching from the high window while a RAM bank is selected is
+;         fine, so it really is the second write to the bank port
+;   FFh   plain instruction fetch from the high window fails once a RAM
+;         bank is selected, and the bank port has nothing to do with it
 
 LED      equ 0FFh
 BANK_RAM equ 078h
@@ -32,11 +33,16 @@ hang:    jr hang
 
 bt_start:
          ld a,RAM_BASE
-         out (BANK_RAM),a       ; ROM -> RAM bank 0, known to survive
-         ld a,RAM_BASE+1
-         out (BANK_RAM),a       ; RAM bank 0 -> RAM bank 1, never tested:
-                                ; every single-shot probe put ROM back first
-         ld a,0F5h
+         out (BANK_RAM),a       ; RAM bank 0 into the low window
+         nop                    ; and then just fetch, from the high window,
+         nop                    ; which the switch does not move
+         nop
+         nop
+         nop
+         nop
+         nop
+         nop
+         ld a,0F7h
          out (LED),a            ; I/O only
 
          xor a

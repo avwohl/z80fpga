@@ -74,7 +74,7 @@ module top (
       .ROM_BANKS (1),                 // a 32 KB bank ...
       .ROM_AW_P  (13),                // ... holding an 8 KB image, mirrored
       .RAM_BANKS (2),                 // 64 KB; sw/boot.z80's RAM_N matches
-      .ROM_INIT  ("_fw.hex"),
+      .ROM_INIT  ("report.hex"),
       .UCODE_MEM ("z80_ucode.mem"),
       .DISP_MEM  ("z80_dispatch.mem")
   ) u_soc (

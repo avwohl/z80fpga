@@ -589,6 +589,30 @@ Every earlier probe put ROM back before doing anything else, so a
 **RAM-to-RAM** bank switch had never been tested.  It is the one thing
 `sw/boot.z80`'s loop does that no single-shot probe did.
 
+Except it is not the bank value, and not the second `OUT` either.  Writing
+`80h` twice, no change at all, kills it the same way.  And so does this,
+which has no second `OUT`, no memory write and no bank value change in it:
+
+```
+    out (78h), 80h      ; RAM bank 0 into the low window
+    nop  x8             ; and then nothing but instruction fetch
+    out (0FFh), a       ; never reached
+```
+
+while the same thing with only two instructions after the `OUT` *is*
+reached.  So the statement is bigger and simpler than a broken bank check:
+**once a RAM bank is selected, execution from the common bank fails after a
+handful of instructions.**  The high window is where the code runs and the
+switch does not move it; nothing in the RTL makes its fetch path depend on
+`cur_bank`, the netlist agrees, every simulation agrees, three placements
+agree, and the silicon does not.
+
+A fifth fix was tried against it and reverted with the rest: latching
+`cur_bank` on the **falling** edge, which puts half a clock between it
+changing and the block RAM latching an address.  That is the textbook cure
+for a hold race and it changes nothing, which argues the hold reading is
+wrong too.
+
 That transition flips `cur_bank[0]`, which is `phys[15]`, which is the block
 RAM's group select -- and the next instruction fetch comes out of that RAM.
 A short `cur_bank -> mux -> AD` path changing on the same edge the block RAM
