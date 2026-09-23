@@ -627,6 +627,18 @@ narrower: **a couple of instructions after a bank switch run, and then it
 dies** -- and putting ROM straight back does not save it, so whatever goes
 wrong is already done by then.
 
+**And a caveat that undercuts part of the above, worth stating plainly.**
+These results come from two different bitstreams.  The console-era probes
+ran on the plain `top.sv`; everything measured through the flash runs on
+`flashreport_top.sv`, which adds `flash_wr` and three MSPI pins and is
+therefore a different netlist and a different placement.  They disagree: an
+eight-byte prober -- switch, restore, return -- does not return in the flash
+build, while a longer one that reads `8010h` on the way through *did* return
+in the console build and said so.  Both cannot be describing the same
+machine.  Anything that matters should be re-measured inside one build
+before it is believed, and the flash build is the one to use, because it
+needs nobody watching.
+
 **Refresh is not the mechanism either**, which was the best-fitting guess
 and is worth writing down as dead.  The core drives `{I, R}` on the address
 bus during T3-T4 of every M1 (`z80_core.sv`, `a = (tcnt >= 3) ? {rI, rR} :
