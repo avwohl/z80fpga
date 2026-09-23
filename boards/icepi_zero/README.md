@@ -261,9 +261,23 @@ directions are all proved on hardware.
 
 The banner needs a reset to see, because the board prints it microseconds
 after power-up, long before a terminal can open the port -- hold the port open
-and press a button. Both buttons are on the **bottom** of the board, in the
-middle, 3.4 mm apart (SW1 and SW2 at X = 12.4 mm); one of them is `button[0]`
-on C4, the reset.
+and reset. Both buttons are on the **bottom** of the board, in the middle,
+3.4 mm apart (SW1 and SW2 at X = 12.4 mm); one of them is `button[0]` on C4.
+
+**`top.sv` also resets on DTR**, so a session at the far end of a wire does
+not need the underside of the board: open the port, then assert DTR, and the
+banner arrives in the terminal already watching for it. `usb_dtrn` is L15, an
+FT231X output this design had not been using. It is an *edge*, so a terminal
+that holds DTR asserted does not hold the machine in reset, and .NET's
+SerialPort leaves `DtrEnable` false on open, so merely opening the port does
+nothing.
+
+That much is **built and timing-clean but not yet exercised on hardware**:
+loading it needs JTAG, JTAG needs the WinUSB binding, and putting that binding
+back needs Zadig -- `pnputil /add-driver ... /install` will not do it, because
+FTDI's signed package outranks libwdi's and pnputil has no force. Reverting is
+scriptable (`pnputil /remove-device` then `/scan-devices`); only the outbound
+direction needs the GUI.
 
 **Still bitstream-only:** the SDRAM and RomWBW variants.
 

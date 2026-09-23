@@ -26,7 +26,8 @@ module top (
     input  logic [1:0] button,        // pulled up: 0 when pressed
     output logic [4:0] led,
     output logic       usb_tx,        // FPGA -> FTDI
-    input  logic       usb_rx         // FTDI -> FPGA
+    input  logic       usb_rx,        // FTDI -> FPGA
+    input  logic       usb_dtrn       // FTDI DTR, active low; resets on assert
 );
 
   localparam int CLK_SHIFT = 1;       // 50 MHz >> 1 = 25 MHz
@@ -45,18 +46,33 @@ module top (
   // 128 clocks after configuration, and again 128 clocks after the button is
   // let go, which debounces it for free.  The synchroniser is not decorative:
   // the button is asynchronous to a clock this design derives itself.
-  logic [1:0] btn0_sync, btn1_sync;
+  // The console's DTR line resets as well, because both buttons are on the
+  // underside of the board and a session at the other end of a wire cannot
+  // reach them.  Asserting DTR from the host is then how you make the banner
+  // appear in the terminal that is already watching for it.
+  //
+  // An edge, not a level: a terminal that holds DTR asserted for the whole
+  // session would otherwise hold the machine in reset forever.  .NET's
+  // SerialPort leaves DtrEnable false on open, so opening the port does not
+  // reset by itself -- setting DtrEnable true is the deliberate act.
+  logic [1:0] btn0_sync, btn1_sync, dtr_sync;
+  logic       dtr_prev;
   logic [7:0] rstcnt = 8'h00;
   logic       rst_n;
 
   always_ff @(posedge clk_sys) begin
     btn0_sync <= {btn0_sync[0], button[0]};
     btn1_sync <= {btn1_sync[0], button[1]};
+    dtr_sync  <= {dtr_sync[0],  usb_dtrn};
+    dtr_prev  <= dtr_sync[1];
   end
 
+  // deasserted -> asserted, one clock wide
+  wire dtr_reset = dtr_prev && !dtr_sync[1];
+
   always_ff @(posedge clk_sys) begin
-    if (!btn0_sync[1])   rstcnt <= 8'h00;
-    else if (!rstcnt[7]) rstcnt <= rstcnt + 8'd1;
+    if (!btn0_sync[1] || dtr_reset) rstcnt <= 8'h00;
+    else if (!rstcnt[7])            rstcnt <= rstcnt + 8'd1;
   end
 
   assign rst_n = rstcnt[7];

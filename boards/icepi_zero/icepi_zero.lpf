@@ -40,6 +40,12 @@ IOBUF  PORT "usb_tx" IO_TYPE=LVCMOS33 PULLMODE=UP DRIVE=4;
 LOCATE COMP "usb_rx" SITE "K16";
 IOBUF  PORT "usb_rx" IO_TYPE=LVCMOS33 PULLMODE=UP DRIVE=4;
 
+## DTR from the FT231X, so a remote session can reset the board: both buttons
+## are on the underside and nobody at the far end of a wire can press them.
+## Pulled up, so it reads deasserted when no host holds the line.
+LOCATE COMP "usb_dtrn" SITE "L15";
+IOBUF  PORT "usb_dtrn" IO_TYPE=LVCMOS33 PULLMODE=UP DRIVE=4;
+
 ## Five user LEDs.
 LOCATE COMP "led[0]" SITE "E13";
 IOBUF  PORT "led[0]" IO_TYPE=LVCMOS33 PULLMODE=DOWN DRIVE=4;
