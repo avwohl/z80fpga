@@ -13,9 +13,13 @@
 ; the other's value and the address line is named in the output.  Then a data
 ; walk at one address, for stuck data bits.
 ;
-; It reports on the console AND on the LED port, because this board has had
-; neither reliably: 1 running, 6 all passed, 7 an address line failed,
-; 5 a data line failed.
+; It reports on the console and, because this board's console keeps dying, by
+; BLINKING all three LED-port lamps together and then pausing.  Count the
+; blinks; there is nothing to decode:
+;
+;   1 blink   everything passed
+;   2 blinks  an address line is bad
+;   3 blinks  a data line is bad
 
 UART_ST  equ 000h
 UART_DAT equ 001h
@@ -63,8 +67,8 @@ ar:      push bc
          pop af
          call puthex
          call crlf
-         ld a,7
-         out (LED),a
+         ld a,2                 ; 2 blinks: an address line is bad
+         ld (blinks),a
          pop bc
          jr dtest
 ar1:     pop bc
@@ -78,8 +82,8 @@ ar1:     pop bc
          call puts
          call puthex
          call crlf
-         ld a,7
-         out (LED),a
+         ld a,2                 ; 2 blinks: an address line is bad
+         ld (blinks),a
          jr dtest
 agood:   ld hl,m_aok
          call puts
@@ -101,19 +105,49 @@ dw:      ld (hl),c
          pop af
          call puthex
          call crlf
-         ld a,5
-         out (LED),a
+         ld a,3                 ; 3 blinks: a data line is bad
+         ld (blinks),a
          jr done
 dw1:     sla c
          jr nz,dw
          ld hl,m_dok
          call puts
-         ld a,6
-         out (LED),a
+         ld a,1                 ; 1 blink: everything passed
+         ld (blinks),a
 
 done:    ld hl,m_end
          call puts
-hang:    jr hang
+
+; ---- and say it again, forever, by blinking, which needs no decoding
+;      1 blink  everything passed
+;      2 blinks an address line is bad
+;      3 blinks a data line is bad
+hang:    ld a,(blinks)
+         ld b,a
+bl1:     push bc
+         ld a,007h              ; all three lamps on
+         out (LED),a
+         call delay
+         xor a                  ; and off
+         out (LED),a
+         call delay
+         pop bc
+         djnz bl1
+         call delay             ; a long gap, so the count is obvious
+         call delay
+         call delay
+         call delay
+         jr hang
+
+; about a fifth of a second at 27 MHz
+delay:   ld de,0
+dl1:     dec de
+         ld a,d
+         or e
+         jr nz,dl1
+         ret
+
+blinks:  db 1
 
 ; HL = BASE + (1 << C), for C = 1..14
 addr_of: ld hl,1

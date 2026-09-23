@@ -521,9 +521,15 @@ exactly as observed -- deterministically, and differently depending on where
 the code sits. That is a memory-decode question, not a banking one.
 
 `sw/ramtest.z80` asks it, with no `OUT` to the bank port anywhere in it:
-walking ones on the address lines of the common bank, then on the data lines,
-reporting on the console *and* on the LED port -- 6 both passed, 7 an address
-line failed, 5 a data line failed. It is verified against the real netlist in
+walking ones on the address lines of the common bank, then on the data
+lines.  It reports on the console, and then -- because this board's console
+keeps dying and three LEDs read as a binary number is a fussy thing to ask
+anyone for -- it **blinks the verdict** on all three lamps together and
+pauses, forever.  Count the blinks, there is nothing to decode:
+
+- **1 blink** -- everything passed
+- **2 blinks** -- an address line is bad
+- **3 blinks** -- a data line is bad It is verified against the real netlist in
 a gate-level run, where it says `addr ok` / `data ok` and settles on LED 6, so
 a different answer from the board means the board.
 
