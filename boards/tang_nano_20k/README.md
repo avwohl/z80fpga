@@ -228,11 +228,19 @@ fault is:
 What that leaves is the two links a simulation cannot reach: `gowin_pack`'s
 placement of block RAM contents into the bitstream, and the board itself.
 `gowin_unpack` recovers 37 `BSRAM` cells from `z80fpga.fs` -- the right count,
-32 + 4 + 1 -- but no `INIT_RAM`, so it cannot confirm the contents. apicula
-does handle x9: the packed netlist carries `BSRAM_SUBTYPE = X9` with 288-bit
-init rows on `u_cpu.drom.0.0`, and `gowin_pack`'s `get_bits` reads bits 8 and
-17 from the data for width 288 where it forces them to zero for 256. It looks
-right; it is not proved right.
+32 + 4 + 1 -- but no `INIT_RAM`, so it cannot read the contents back.
+
+The x9 path was tested differently, and it passes. The build is
+**byte-deterministic**: two untouched runs produce identical `.fs` files, so a
+diff means something. Setting bit 8 -- the parity position, the one apicula
+treats specially at width 288 -- on sixteen dispatch entries moves **8 lines**
+of the bitstream, and removing the change restores it byte for byte. So the
+9th bit does reach the silicon, and `gowin_pack`'s x9 handling is not the
+fault. (The packed netlist also carries `BSRAM_SUBTYPE = X9` with 288-bit init
+rows on `u_cpu.drom.0.0`, which is what selects that path.)
+
+That leaves the placement of the other 36 blocks' contents, which nothing here
+can read back, and the board.
 
 And the board's own USB link is documented below as having enumerated, failed
 with Code 43, recovered on a replug, worked, gone silent and then vanished
