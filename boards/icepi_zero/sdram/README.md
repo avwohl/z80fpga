@@ -143,3 +143,27 @@ holds the CPU in reset while that happens — the monitor's first stack push is
 its first RAM access, and it simply waits there — so a chip that never comes
 up shows as a board that says nothing at all rather than as one that says
 something wrong.
+
+## It runs, 2026-09-23
+
+Flashed to the board and reset over DTR, with nobody touching it:
+
+```
+z80fpga ready
+banked memory ok
+>
+```
+
+`RAM_N` is retargeted to 16 on the way in (see the Makefile), so that line
+means **all sixteen banks** were selected, written and read back -- the whole
+512 KB window, not the 64 KB that the shared monitor's default `RAM_N = 2`
+would have covered. Since every RAM bank lives in the SDRAM here, it also
+means the controller, the refresh and the address decode are all good at
+25 MHz.
+
+One honest gap in that: the evidence the *SDRAM* bitstream is the one running
+is that `mingw32-make flash` in this directory wrote `sdram/z80fpga.bit` and
+reported `Refresh: DONE`. The base build passes the same check for different
+reasons, and its LED mapping happens to be indistinguishable from this one's
+at the states `sw/boot.z80` reaches, so the console cannot tell them apart. A
+flash read-back would settle it, and needs the WinUSB binding.

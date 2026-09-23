@@ -153,6 +153,10 @@ so it takes `make flash` and a driver swap to see both; that board's README
 has the detail, and also which of its three USB-C sockets is the one that
 talks.
 
+Its **SDRAM build runs too**, same day: 512 KB of RAM in the board's SDRAM
+with all sixteen banks checked, reset over DTR rather than by hand. That is
+the first target here whose RAM is not block RAM.
+
 Those three. The Arty flow is verified to a placed, routed, timing-closed
 bitstream and no further; keep the two kinds of claim apart rather than
 letting a hardware result leak onto a board nobody has plugged in.
