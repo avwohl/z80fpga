@@ -639,6 +639,22 @@ machine.  Anything that matters should be re-measured inside one build
 before it is believed, and the flash build is the one to use, because it
 needs nobody watching.
 
+**Two traps in the instrument itself, both learned the hard way.**
+
+The flash pages are **not erased between runs**.  A page program only clears
+bits, so every run leaves its markers behind and the next one reads them as
+its own.  The base address has to move per run -- it is hardcoded at
+`7F0000h` in `flashreport_top.sv` and wants to be a parameter -- or the
+region has to be erased by other means.  Several readings here were taken
+before that was noticed and should be treated as suspect unless the marker
+numbers are unique to the run.
+
+And **validate the writer before trusting a silence**.  A ROM-only program
+emitting three markers with long gaps proves it end to end; without that
+check, "nothing fired" is indistinguishable from a broken channel.  It was
+checked, and the writer is sound -- but only after a run of results had
+already been read the other way.
+
 **Re-established inside the flash build alone, which is the point of the
 caveat:** the real `sw/boot.z80`, unmodified except that its verdict is now
 written as `F6h`/`F7h` so the flash writer picks it up, reports **neither**.

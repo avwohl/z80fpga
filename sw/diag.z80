@@ -1,55 +1,45 @@
-; Does a bank switch write into the common bank?
+; Does LDIR into the common bank work in this build, and does code there run?
 ;
-; Restoring ROM straight after the switch does not save the machine, so
-; whatever goes wrong is already done by the time the switch completes.  The
-; obvious candidate is a write landing somewhere it should not.
+; The instrument is now proved: three markers from a ROM-only program all
+; come back.  And a bare probe at 8000h -- no banking anywhere in it -- does
+; not.  So either the copy does not land or the code there does not run.
+; This asks, entirely from ROM, which has never failed.
 ;
-; The prober here is eight bytes -- switch, restore, return -- which is
-; inside what has been seen to survive.  Everything else runs from ROM in
-; the low window, where nothing has ever failed.  A5h is planted at 9040h
-; before the call and read back after it.
-;
-;   F1h then F5h   it returned, and 9040h still holds A5h: the switch writes
-;                  nothing, and the failure is something else
-;   F1h then Fxh   it returned and 9040h changed -- the switch wrote over the
-;                  common bank
-;   F1h alone      it returned but the second marker never made it
-;   nothing        it did not return
+;   F5, F1  8000h and 8001h read back 3Eh and F1h: the copy landed, so it is
+;           execution in the common bank that fails
+;   other   the copy did not land
 
 LED      equ 0FFh
-BANK_RAM equ 078h
-BANK_ROM equ 07Ch
-RAM_BASE equ 080h
 
          org 0000h
 
 start:   di
          ld sp,0FFF0h
 
-         ld a,0A5h
-         ld (09040h),a          ; plant it, with ROM in the low window
-         ld a,05Ah
-         ld (09041h),a
-
-         ld hl,bt_start
+         ld hl,pa_s
          ld de,08000h
-         ld bc,bt_end-bt_start
+         ld bc,pa_e-pa_s
          ldir
 
-         call 08000h            ; switch, restore, return -- eight bytes
-
-         ld a,0F1h
-         out (LED),a            ; it came back
-         call bigdel            ; let the flash writer finish
-
-         ld a,(09040h)
+         ld a,(08000h)          ; want 3Eh -> nibble E
          and 00Fh
          or 0F0h
-         out (LED),a            ; what 9040h holds now
+         out (LED),a
+         call bigdel
+
+         ld a,(08001h)          ; want F1h -> nibble 1
+         and 00Fh
+         or 0F0h
+         out (LED),a
+         call bigdel
+
+         ld a,(08004h)          ; want C9h -> nibble 9
+         and 00Fh
+         or 0F0h
+         out (LED),a
 hang:    jr hang
 
-; about a fifth of a second at 27 MHz, several times over
-bigdel:  ld b,12
+bigdel:  ld b,20
 bd1:     push bc
          ld de,0
 bd2:     dec de
@@ -60,10 +50,7 @@ bd2:     dec de
          djnz bd1
          ret
 
-bt_start:                       ; runs at 8000h, eight bytes
-         ld a,RAM_BASE
-         out (BANK_RAM),a
-         xor a
-         out (BANK_ROM),a
-         ret
-bt_end:
+pa_s:    ld a,0F1h              ; 3E F1
+         out (LED),a            ; D3 FF
+         ret                    ; C9
+pa_e:
