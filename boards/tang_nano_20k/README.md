@@ -1032,6 +1032,12 @@ outside the SoC reads `led8[7:4]`, and registering `led8` first does not help
 contradicts the result outright. It is recorded here so the next session does
 not spend a day on it believing it is the bug.
 
+Settled afterwards: with the read-mux fix in place -- the design that now runs
+`sw/boot.z80` to completion on this board -- the gate simulation of that same
+top is still dead in exactly the same way. A netlist that boots the monitor on
+hardware and goes X at the first PC update in simulation is a simulation
+artifact and nothing else. Its cause is still unknown; it is not the bug.
+
 **One trap in the checker itself.** A marker for `n` is written as `F0h|n`, so
 marker 15 is `FFh`, which is exactly what an erased page reads. Page 15 can
 never be detected and any checker that tests "not `FFh`" will report a false
