@@ -246,10 +246,26 @@ through `led[4]` in board order, anodes through R1-R5 with common cathodes, so
 There is a free check on any reading: `ledchk` only ever writes 1 to 7, so a
 pattern that decodes above 7 means you are reading the row backwards.
 
-**Not yet shown on hardware:** the console. `ledchk.z80` never touches the
-UART, and on Windows the console and the programmer cannot be bound at the
-same time -- see the driver note under Build. The SDRAM and RomWBW variants
-are also still bitstream-only.
+**And the console works.** With the design in flash and the FTDI driver put
+back, `sw/boot.z80` came up on COM9 at 115200:
+
+```
+z80fpga ready
+banked memory ok
+> 
+```
+
+and typing `AB<CR>` at it returns `AB<CR><LF>`, which is the echo loop turning
+a bare CR into a newline. So banner, bank check, prompt and both UART
+directions are all proved on hardware.
+
+The banner needs a reset to see, because the board prints it microseconds
+after power-up, long before a terminal can open the port -- hold the port open
+and press a button. Both buttons are on the **bottom** of the board, in the
+middle, 3.4 mm apart (SW1 and SW2 at X = 12.4 mm); one of them is `button[0]`
+on C4, the reset.
+
+**Still bitstream-only:** the SDRAM and RomWBW variants.
 
 If a future board is silent, the Nexys A7 README's advice applies here too:
 bisect with a design that has no CPU in it at all. `make` in `gateware/blinky` from the

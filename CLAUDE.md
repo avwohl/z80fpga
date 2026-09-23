@@ -145,10 +145,13 @@ worth reading before touching `rtl/soc/` is the section on the read mux.
 
 **And the Icepi Zero**, 2026-09-23, on a **v1.3**: `sw/ledchk.z80` holding 6,
 its BANK CHECK PASSED state, so both RAM banks and execution from the common
-bank are good at 25 MHz -- the fastest Z80 of any target here. Its console is
-not shown yet, because on Windows the FT231X cannot be bound to the programmer
-and to a COM port at the same time; that board's README has the detail, and
-also which of its three USB-C sockets is the one that talks.
+bank are good at 25 MHz -- the fastest Z80 of any target here. Then, from
+flash with the FTDI driver put back, the console too: `z80fpga ready`,
+`banked memory ok`, the prompt, and echo in both directions. On Windows the
+FT231X cannot be bound to the programmer and to a COM port at the same time,
+so it takes `make flash` and a driver swap to see both; that board's README
+has the detail, and also which of its three USB-C sockets is the one that
+talks.
 
 Those three. The Arty flow is verified to a placed, routed, timing-closed
 bitstream and no further; keep the two kinds of claim apart rather than
