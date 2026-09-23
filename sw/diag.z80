@@ -117,60 +117,15 @@ phnib:   and 0Fh
 
 ; ------------------------- sw/boot.z80's checker, with progress markers
 bt_start:
-         ld c,RAM_BASE
-         ld b,RAM_N
-btw:     ld a,001h
-         ld (PROG),a
-         ld a,c
-         out (BANK_RAM),a
-         ld a,002h
-         ld (PROG),a
-         ld a,c
-         ld (4000h),a
-         ld a,003h
-         ld (PROG),a
-         ld a,c
-         xor 0FFh
-         ld (4001h),a
-         ld a,004h
-         ld (PROG),a
-         inc c
-         djnz btw
-
-         ld a,011h
-         ld (PROG),a
-
-         ld c,RAM_BASE
-         ld b,RAM_N
-         ld d,0
-btr:     ld a,c
-         out (BANK_RAM),a
-         ld a,(4000h)
-         cp c
-         jr z,btr1
-         inc d
-btr1:    ld a,(4001h)
-         ld e,a
-         ld a,c
-         xor 0FFh
-         cp e
-         jr z,btr2
-         inc d
-btr2:    inc c
-         djnz btr
-
-         ld a,022h
-         ld (PROG),a
-
+         out (BANK_RAM),a       ; select the RAM bank
+         ld a,0A5h
+         ld (PROG),a            ; a HIGH-window write, first thing after it
          xor a
-         out (BANK_ROM),a
-         ld a,033h
-         ld (PROG),a
-         ld a,d
+         out (BANK_ROM),a       ; ROM back
          ret
 bt_end:
 
-m_hi:    db "fine", 0Dh, 0Ah, 0
+m_hi:    db "hiwr", 0Dh, 0Ah, 0
 m_ok:    db "ok   ", 0
 m_died:  db "died ", 0
 m_end:   db "end", 0Dh, 0Ah, 0

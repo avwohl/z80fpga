@@ -417,6 +417,31 @@ zeros and wraps to 0000h rather than resetting, so RAM survives -- gives
 That is the same instruction, with the same value in A, that the standalone
 prober performs happily.
 
+Narrowing it further gives a **two-instruction reproducer**:
+
+```
+    out (78h), 80h
+    ld (9002h), a      ; a write to the HIGH window -- dies
+```
+
+and the same thing with the write to `4000h`, the low window, runs fine.  So
+does a high-window *read* followed by a high-window write.  What fails is a
+high-window **write** as the first memory access after a write to the bank
+port.
+
+**That reproducer passes in simulation of the netlist that becomes this very
+bitstream.**  Same `.fs` source, same ROM image, `make gatesim` style run:
+`ok A5`.  On the board: `died`.  Two instructions, identical logic, opposite
+outcomes.  That is as clean a separation of "the design is right" from "the
+silicon is not executing it" as this tree is going to get.
+
+Tried against the reproducer and no help:
+
+- `MEM_WAIT = 1`, so the memory path gets an extra T-state.
+- A settling cycle: holding `wait_n` low for the clock after any write to the
+  bank port, so `cur_bank`'s transition is never in flight during a memory
+  access.  Reverted; it is not the bank mux settling.
+
 So it is not the instruction, not the value, not the window and not the
 sequence: it is where the code sits. That is the shape of a marginal path,
 not a logic error, which fits everything else -- the netlist runs the whole
