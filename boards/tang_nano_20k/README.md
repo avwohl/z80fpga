@@ -384,14 +384,15 @@ channel off this part that still works. It needs one glance and no serial.
 
 ## The state of the board itself
 
-The board's flash holds a **diagnostic**, not the monitor: a staged test that
-emits `A` once it is alive, `B` once `LDIR` into the common bank has
-completed, and then `P` or `E` for whether `4000h` in the low banked window
-reads back what was written. One power-up prints the answer, if the console
-ever comes back. `make flash` puts the real build back.
+The board's flash holds the **`make ledchk` image**, not the monitor, so the
+LED reading above survives a power cycle and needs no JTAG, no console and no
+host. Plug the board in and the three rightmost LEDs settle on the answer.
+`make flash` puts the real build back.
 
-Its SRAM currently holds the `make ledchk` image, which needs no console at
-all.
+It replaced an earlier staged diagnostic that reported over the console --
+`A` alive, `B` after `LDIR` into the common bank, then `P` or `E` for whether
+`4000h` in the low banked window read back what was written. That one is
+useless on a board whose console has failed, which is why it was replaced.
 
 **Its serial channel has failed.** JTAG is perfectly healthy -- `idcode 0x81b`,
 `GW2A(R)-18(C)`, and `openFPGALoader` reports `DONE` on every load -- while the
