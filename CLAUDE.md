@@ -80,7 +80,7 @@ the RAMB rows of Vivado's utilisation report rather than assuming.
 
 ## The Nexys RomWBW build is delicate, and must not be perturbed
 
-It is the only design here that has run on hardware, and it sits at **94.81%
+It is the only RomWBW build that has run on hardware, and it sits at **94.81%
 of the part's block RAM** -- 128 of 135 RAMB36 tiles, a 512 KB ROM that Vivado
 cascades in pairs. Changing `sd_spi`'s buffer to the muxed form above makes its
 `place_design` fail with **sixty-four `REQP-1962` "cascade ADDR15 pin check"**
@@ -107,6 +107,13 @@ exactly the kind of perturbation this section is about. It rebuilt clean --
 0 DRC, no `REQP-1962`, still 128 of 135 RAMB36, WNS +0.562 ns -- and ran on the
 board, but the point is that it had to be found out rather than assumed.
 
+The read-mux change in `rtl/soc/z80_soc.sv` on 2026-09-23 was rebuilt the same
+way and is also clean: 0 errors of any kind, no `REQP-1962`, 128 of 135
+RAMB36 again, "All user specified timing constraints are met" with WNS
++0.237 ns and WHS +0.060 ns over 20718 endpoints. The slack is tighter than
+the +0.562 ns above -- two flip-flops on the data path will do that -- so keep
+reading the number rather than the verdict.
+
 What is *not* fragile is the ROM's contents, and it is worth knowing before
 this section scares you off trying another image. A rebuild carrying RomWBW
 3.6.0 instead of 3.5.1 was made on 2026-09-22: clean `place_design`, no
@@ -128,10 +135,17 @@ directory, which works. A `$readmemh` inside the RTL resolves relative to the
 Verilog source file, not the working directory.
 
 **The Nexys A7-100T has run on hardware** — 2026-09-06, banner, `banked memory
-ok` across all eight RAM banks, and console echo over the USB-UART. That is
-the only target that has. The Arty flow is verified to a placed, routed,
-timing-closed bitstream and no further; keep the two claims apart rather than
-letting the hardware result leak onto the board nobody has plugged in.
+ok` across all eight RAM banks, and console echo over the USB-UART.
+
+**The Tang Nano 20K has too**, 2026-09-23: `banked memory ok` and the prompt,
+reported through the configuration flash because that board's UART bridge is
+dead. Two runs, two flash regions. Its console has never worked and proving
+that took most of a day, so `boards/tang_nano_20k/README.md` is long; the part
+worth reading before touching `rtl/soc/` is the section on the read mux.
+
+Those two. The Arty flow is verified to a placed, routed, timing-closed
+bitstream and no further; keep the two kinds of claim apart rather than
+letting a hardware result leak onto a board nobody has plugged in.
 
 The two boards use the same XC7A100T-CSG324 and both clock from E3, so an Arty
 bitstream loads on a Nexys, asserts DONE and runs mute — every other pin
@@ -160,3 +174,16 @@ constrains the derived clock, and an unconstrained internal clock is not
 checked at all — the only proof it applied is
 `constraining clock net 'clk_sys'` in `nextpnr.log`, which
 `mingw32-make timing` prints.
+
+**And nextpnr-himbaechel does not time block RAM inputs at all.** On the Tang
+Nano build its critical path report never sinks into an `AD`, `DI`, `CE`,
+`WRE` or `BLKSEL` pin, and never names `u_ram` or `u_rom`; the one BSRAM it
+mentions is the dispatch ROM, as a *source*. So `Max frequency ... (PASS at
+27.00 MHz)` is a claim about a subset of the design that excludes every path
+entering a memory. Check it the way the LPF lines above are checked:
+
+```
+grep -o "Sink [^ ]*\.\(AD\|DI\|CE\|WRE\|BLKSEL\)[0-9]*" nextpnr.log
+```
+
+Nothing back means the memories were not in the number.

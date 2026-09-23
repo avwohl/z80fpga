@@ -31,17 +31,18 @@ RAM_N    equ 2                 ; must match the SoC's RAM_BANKS
 ; Lit is a 1 on every board here, and the leftmost of the three is the high
 ; bit.  A board with no LEDs writes the port and nothing happens.
 ;
-; The verdict is written as F6h/F7h rather than 6/7.  The lamps show the low
-; three bits either way, and the high nibble is what
-; boards/tang_nano_20k/flashreport_top.sv watches for: it page-programs any
-; F0h|n into the configuration flash, so on a board whose console has died
-; the verdict still comes off over JTAG.  See that board's README.
+; All four are written with F in the high nibble -- F1h, F6h, F7h, F3h --
+; rather than as bare 1, 6, 7 and 3.  The lamps show the low three bits either
+; way, and the high nibble is what boards/tang_nano_20k/flashreport_top.sv
+; watches for: it page-programs any F0h|n into the configuration flash, so on
+; a board whose console has died every one of these states still comes off
+; over JTAG, not just the verdict.  See that board's README.
 
          org 0000h
 
 start:   di
          ld sp,0FFF0h
-         ld a,1
+         ld a,0F1h
          out (LED),a
          ld hl,banner
          call puts
@@ -75,7 +76,7 @@ bad:     push af
 report:  ld hl,crlf
          call puts
 
-         ld a,3                 ; up, and about to echo
+         ld a,0F3h              ; up, and about to echo
          out (LED),a
          ld hl,prompt
          call puts

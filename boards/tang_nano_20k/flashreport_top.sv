@@ -127,21 +127,42 @@ module top #(
   // programmed once, at 7F0000h + (n << 8), so a single run can report every
   // marker it reached rather than only the first.  A page program can only
   // clear bits, which is why each n gets its own page.
-  logic [15:0] seen;
+  // Markers are queued, not dropped.  A page program takes about 80 ms and
+  // the earlier version only accepted a marker when the writer was idle, so
+  // any program that reported twice in quick succession silently lost the
+  // second one -- and every Z80 program written for this board had to carry a
+  // delay loop after each marker to work around it.  sw/boot.z80 should not
+  // have to know that this board exists, so the queue lives here instead.
+  logic [15:0] seen, pend;
   logic        fw_go, fw_busy;
   logic  [3:0] fw_n;
+
+  // the lowest marker still waiting to go out
+  logic [3:0] nxt;
+  always_comb begin
+    nxt = 4'd0;
+    for (int i = 15; i >= 0; i--) if (pend[i]) nxt = 4'(i);
+  end
 
   always_ff @(posedge clk)
     if (!rst_n) begin
       seen  <= 16'h0;
+      pend  <= 16'h0;
       fw_go <= 1'b0;
       fw_n  <= 4'h0;
     end else begin
       fw_go <= 1'b0;
-      if (led8[7:4] == 4'hF && !seen[led8[3:0]] && !fw_busy && !fw_go) begin
-        fw_go       <= 1'b1;
-        fw_n        <= led8[3:0];
+      // take it whether or not the writer is free ...
+      if (led8[7:4] == 4'hF && !seen[led8[3:0]]) begin
         seen[led8[3:0]] <= 1'b1;
+        pend[led8[3:0]] <= 1'b1;
+      end
+      // ... and send one when it is.  The two cannot collide on the same bit:
+      // seen makes a marker arrive exactly once.
+      if (|pend && !fw_busy && !fw_go) begin
+        fw_go     <= 1'b1;
+        fw_n      <= nxt;
+        pend[nxt] <= 1'b0;
       end
     end
 

@@ -479,9 +479,33 @@ module z80_soc #(
     else                         port_rdata = 8'hFF;
   end
 
+  // The read mux's select has to age with the data it selects.  rom_rdata and
+  // ram_rdata are registered, so they are a clock behind phys -- but sel_rom
+  // and bank_valid come straight out of the MMU on the live address.  For a
+  // data read that never matters: the address does not move until after the
+  // byte has been taken.  An M1 cycle does move it.  The core puts the
+  // refresh address on the bus at T3, that address lands in the low 32 KB,
+  // and if the low bank is ROM then sel_rom flips combinationally at the very
+  // edge on which the instruction is latched.  Whether the old or the new
+  // value wins is then a hold race, which is why slowing the clock and adding
+  // wait states both leave it exactly as it was.
+  //
+  // Fetching out of ROM is immune, because the fetch address and the refresh
+  // address both select ROM and rom_rdata does not move.  Fetching out of the
+  // common bank is not, and on the Tang Nano 20K it does not work at all.
+  //
+  // Registering the select costs nothing -- it is constant for the whole of
+  // any cycle the core actually reads -- and makes the mux change on the same
+  // edge as the data behind it.
+  logic sel_rom_q, bank_valid_q;
+  always_ff @(posedge clk) begin
+    sel_rom_q    <= sel_rom;
+    bank_valid_q <= bank_valid;
+  end
+
   assign din = !iorq_n                   ? port_rdata
-             : !bank_valid               ? 8'hFF
-             : (sel_rom && !SDRAM_ROM)   ? rom_rdata
+             : !bank_valid_q             ? 8'hFF
+             : (sel_rom_q && !SDRAM_ROM) ? rom_rdata
                                          : ram_rdata;
 
   // pins this SoC has no use for, tied off so lint does not complain

@@ -1,0 +1,117 @@
+; Is the copy wrong, or is the fetch broken?
+;
+; sw/diag.z80 establishes that a five-byte probe copied to C000h does not run
+; while a data read of C000h returns the byte that was copied.  But it checks
+; only the first byte.  A LDIR that moved one byte and stopped would look
+; exactly the same, and so would a fetch that works perfectly on a probe whose
+; second byte never arrived.
+;
+; So this verifies every byte of the copy separately, and then asks the
+; smallest possible question about fetching: a single C9h -- RET, one byte,
+; no operand -- placed on its own at C800h and called.  If the machine can
+; execute one byte out of RAM, FC comes back.
+;
+;   F1 F2      the channel is alive, running from ROM
+;   F5         C000h reads 3Eh
+;   F6         C001h reads FAh
+;   F7         C002h reads D3h
+;   F8         C003h reads FFh
+;   F9         C004h reads C9h
+;   FA         the five-byte probe at C000h RAN
+;   FB         it returned
+;   FC         a bare RET at C800h returned
+;
+; F5..F9 without FA is a good copy that will not execute.  FC without FA
+; would mean one byte executes and five do not.  Neither FA nor FC is the
+; machine unable to fetch from this RAM at all.
+;
+; Every marker from ROM is followed by a pause, because the board's writer
+; drops one that arrives while it is still busy with the last.  That was the
+; rule when this was written; boards/tang_nano_20k/flashreport_top.sv queues
+; them now, so the pauses are belt and braces rather than load bearing.
+;
+; Marker 0Fh is deliberately unused: it is written as FFh, which is what an
+; erased flash page already reads, so it can never be told from nothing.
+;
+; To run this in simulation, stub the delay out first -- it exists only so
+; the board's flash writer can keep up, and 20 x 65536 iterations is hours
+; of iverilog.  Replace the body of `delay` with a bare `ret`, assemble
+; that, and point sim/tb_tang.sv at the result; sw/diagsim.z80 is the same
+; edit made to sw/diag.z80 and kept.
+;
+
+LED      equ 0FFh
+
+         org 0000h
+
+start:   di
+         ld sp,0FFF0h
+         ld a,0F1h
+         call mark
+         ld a,0F2h
+         call mark
+
+         ; the five-byte probe, and the one-byte one
+         ld hl,pa_s
+         ld de,0C000h
+         ld bc,pa_e-pa_s
+         ldir
+         ld a,0C9h
+         ld (0C800h),a
+
+         ; every byte of the copy, each with its own marker
+         ld hl,0C000h
+         ld de,want
+         ld b,5
+         ld c,0F5h
+chk:     ld a,(de)
+         cp (hl)
+         jr nz,chk1
+         ld a,c
+         call mark
+chk1:    inc hl
+         inc de
+         inc c
+         djnz chk
+
+         call 0C000h            ; the probe emits FA and has no room to pause
+         call delay
+         ld a,0FBh
+         call mark
+
+         call 0C800h            ; a bare RET out of RAM
+         ld a,0FCh
+         call mark
+
+hang:    jr hang
+
+; ------------------------------------------------------------------ markers
+; mark preserves BC and DE: the check loop keeps its counter in B, its marker
+; in C and its pointer in DE, and delay uses both.
+mark:    out (LED),a
+         push bc
+         push de
+         call delay
+         pop de
+         pop bc
+         ret
+
+delay:   ld b,20
+d1:      push bc
+         ld de,0
+d2:      dec de
+         ld a,d
+         or e
+         jr nz,d2
+         pop bc
+         djnz d1
+         ret
+
+want:    db 03Eh, 0FAh, 0D3h, 0FFh, 0C9h
+
+pa_s:    ld a,0FAh
+         out (LED),a
+         ret
+pa_e:
+
+         end

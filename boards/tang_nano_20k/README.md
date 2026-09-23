@@ -1037,3 +1037,81 @@ marker 15 is `FFh`, which is exactly what an erased page reads. Page 15 can
 never be detected and any checker that tests "not `FFh`" will report a false
 `FF` on every run. `scratchpad/check.py` requires the exact byte and still
 cannot see `n = 15`; do not use the top nibble value for anything real.
+
+## It runs. The read mux's select was a clock ahead of its data, 2026-09-23
+
+**`sw/boot.z80` completes on the board.** `F1` alive, **`F6` banked memory
+ok**, `F3` at the prompt, and no `F7`. The monitor copies its bank checker
+into the common bank, *executes it there*, writes and reads back a signature
+in every RAM bank, and reaches the echo prompt. Twice, on two flash regions,
+the second on a pair of pages checked erased immediately beforehand.
+
+### What it was
+
+`z80_soc.sv` chose between the ROM's and the RAM's read data like this:
+
+```systemverilog
+assign din = !iorq_n ? port_rdata : !bank_valid ? 8'hFF
+           : (sel_rom && !SDRAM_ROM) ? rom_rdata : ram_rdata;
+```
+
+`rom_rdata` and `ram_rdata` come out of registered memories, so they are a
+clock behind the address. `sel_rom` and `bank_valid` come straight out of the
+MMU on the **live** address. The select was therefore a clock ahead of the
+data it was selecting.
+
+For a data read that never matters: the address does not move until after the
+byte has been taken. **An M1 cycle moves it.** The core puts the refresh
+address on the bus at T3, `{I,R}` lands in the low 32 KB, and if the low bank
+is ROM then `sel_rom` flips combinationally at the very edge on which the
+instruction is latched. Which value wins is a hold race.
+
+That accounts for every symptom, including the ones that made no sense:
+
+- **Data reads and writes were always fine** -- their address is still there.
+- **Fetching out of ROM was always fine** -- the fetch address and the refresh
+  address both select ROM, and `rom_rdata` does not move.
+- **Fetching out of the common bank was the only thing that failed**, because
+  it is the only case where the two addresses disagree about the mux.
+- **Slowing the clock to 6.75 MHz changed nothing.** A hold race is not a
+  frequency problem, which is exactly why four times the margin bought
+  nothing and why three placements gave byte-identical results.
+- **`MEM_WAIT` of 1 and of 2 changed nothing**, because a wait state moves the
+  latching edge but the address still changes on it.
+
+The fix is four lines: register the select so it changes on the same edge as
+the data behind it. It costs nothing -- the select is constant for the whole
+of any cycle the core actually reads.
+
+### How it was found
+
+Not by reasoning, in the end, but by a ladder. `sw/diag2.z80` verifies every
+byte of the copied probe separately and then calls a bare `C9h` -- one byte,
+RET -- at its own address. The board answered `F5 F6 F7 F8 F9` (all five bytes
+copied correctly), `FC` (**one byte executed out of RAM and returned**) and
+`FB` without `FA` (**the call to the five-byte probe came back without the
+probe's OUT ever happening**).
+
+A call that returns without executing anything is what a first fetch returning
+`C9h` looks like. That killed "it cannot fetch from RAM", which had been the
+working theory for a day, and pointed at the fetch reading something other
+than the byte at the fetch address. `sw/diag3.z80` is the finer ladder -- one
+to five bytes, each rung its own marker -- and is kept for the next time
+something executes out of RAM and should not.
+
+### Two things about the instrument
+
+**Markers are queued now.** A page program takes about 80 ms, and the earlier
+`flashreport_top.sv` only accepted a marker when the writer was idle, so any
+program that reported twice in quick succession silently lost the second. That
+is why every Z80 program written for this board carried a delay loop after
+each marker. The queue is in the top now, so `sw/boot.z80` does not have to
+know this board exists.
+
+**The flash wraps at 8 MB.** A dump at `800000h` is byte-identical to one at
+`0`, so pages `80h` and up alias onto the bitstream. With the bitstream ending
+near 7.3 MB that leaves exactly sixteen usable regions, `70h` through `7Fh`,
+and `70h` starts only about 45 KB past the end. A region only consumes the
+*pages* its markers name, though, so a region is reusable for a program whose
+markers land on pages the last one left erased -- check first, and treat a
+page that already holds the value you are about to write as no evidence.

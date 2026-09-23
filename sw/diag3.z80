@@ -1,0 +1,126 @@
+; How many bytes of a program can this machine execute out of RAM?
+;
+; sw/diag2.z80 established that a bare C9h -- RET, one byte -- runs out of the
+; common bank and returns, while a five-byte probe at C000h does not run at
+; all: the call to it comes straight back without the probe's OUT ever
+; happening.  That is what a first fetch returning C9h instead of 3Eh looks
+; like, and it means the machine can fetch, just not this.
+;
+; So this is a ladder.  Five probes, one to five bytes, each at its own
+; address, each ending in RET, each with its own marker written from ROM after
+; it returns.  Where the markers stop is where execution from RAM stops, and
+; the length that fails first says what kind of fault it is.
+;
+;   F1 F2      the channel is alive, running from ROM
+;   F3         C9h at C100h returned                       (1 byte)
+;   F4         00h C9h at C200h returned                   (2 single-byte ops)
+;   F5         3Eh 55h C9h at C300h returned               (a 2-byte opcode)
+;   F6         21h 34h 12h C9h at C400h returned           (a 3-byte opcode)
+;   F7         3Eh F0h D3h FFh C9h at C500h returned       (the full probe)
+;   F0         ... and that probe's OUT actually executed
+;
+; F0 is written by the probe itself, not from ROM: it is the only marker here
+; that proves an instruction fetched from RAM had an effect, rather than
+; merely that control came back.  A run that reaches F7 without F0 fetched a
+; RET where the OUT should have been.
+;
+; Marker 0Fh is unused throughout: it is written as FFh, which is what an
+; erased flash page already reads, so it can never be told from nothing.
+;
+; To run this in simulation, stub the delay out first -- it exists only so
+; the board's flash writer can keep up, and 20 x 65536 iterations is hours
+; of iverilog.  Replace the body of `delay` with a bare `ret`, assemble
+; that, and point sim/tb_tang.sv at the result; sw/diagsim.z80 is the same
+; edit made to sw/diag.z80 and kept.
+;
+
+LED      equ 0FFh
+
+         org 0000h
+
+start:   di
+         ld sp,0FFF0h
+         ld a,0F1h
+         call mark
+         ld a,0F2h
+         call mark
+
+         ; lay the ladder down
+         ld hl,p1
+         ld de,0C100h
+         ld bc,p2-p1
+         ldir
+         ld hl,p2
+         ld de,0C200h
+         ld bc,p3-p2
+         ldir
+         ld hl,p3
+         ld de,0C300h
+         ld bc,p4-p3
+         ldir
+         ld hl,p4
+         ld de,0C400h
+         ld bc,p5-p4
+         ldir
+         ld hl,p5
+         ld de,0C500h
+         ld bc,p5e-p5
+         ldir
+
+         ; and climb it
+         call 0C100h
+         call delay
+         ld a,0F3h
+         call mark
+
+         call 0C200h
+         call delay
+         ld a,0F4h
+         call mark
+
+         call 0C300h
+         call delay
+         ld a,0F5h
+         call mark
+
+         call 0C400h
+         call delay
+         ld a,0F6h
+         call mark
+
+         call 0C500h
+         call delay
+         ld a,0F7h
+         call mark
+
+hang:    jr hang
+
+; ------------------------------------------------------------------ markers
+mark:    out (LED),a
+         push bc
+         push de
+         call delay
+         pop de
+         pop bc
+         ret
+
+delay:   ld b,20
+d1:      push bc
+         ld de,0
+d2:      dec de
+         ld a,d
+         or e
+         jr nz,d2
+         pop bc
+         djnz d1
+         ret
+
+; -------------------------------------------------------------- the rungs
+p1:      db 0C9h                            ; ret
+p2:      db 000h, 0C9h                      ; nop / ret
+p3:      db 03Eh, 055h, 0C9h                ; ld a,55h / ret
+p4:      db 021h, 034h, 012h, 0C9h          ; ld hl,1234h / ret
+p5:      db 03Eh, 0F0h, 0D3h, 0FFh, 0C9h    ; ld a,F0h / out (FFh),a / ret
+p5e:
+
+         end

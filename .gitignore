@@ -47,3 +47,7 @@ vivado*.jou
 .Xil/
 __pycache__/
 *.pyc
+
+# board and sim scratch: throwaway tops, netlists and probe images
+boards/*/_*
+sim/_*
