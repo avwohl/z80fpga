@@ -368,6 +368,71 @@ since a marginal FTDI link often holds at the lower rate. Whether either helps
 is unknown. If it stays unreliable the on-board bridge is the suspect,
 and reflashing it is a Sipeed exercise rather than anything in this repository.
 
+## What the board actually does, measured 2026-09-22 with a live console
+
+A physical replug brought the console back, which is what Sipeed's FAQ says
+to do and the only thing that has ever worked. The bridge came back reporting
+`2025030317` / `USB Debugger`, so **its EEPROM is intact** and the earlier
+`FT_EEPROM_NOT_PROGRAMMED` reading was a blocked read path, not blank
+silicon. With a working link everything below is measured on the board rather
+than inferred, using `sw/diag.z80`.
+
+**The monitor does not loop, and never did.** It reaches its prompt:
+
+```
+z80fpga ready
+<one byte>
+> 
+```
+
+Three captures, byte-identical, 20 bytes each. The old reading of "the banner
+repeats about 270 times a second, so the monitor is crashing and restarting"
+was the dying bridge replaying a buffer. That is now retracted for good.
+
+**The one byte is the verdict, and it is B0h.** `B0h` is `80h + '0'`: the
+`bad:` path printing an error count of 80h. The count is the checker's `D`,
+and 80h is what `ld de,08000h` leaves in D before the `LDIR` -- so the
+checker's `ld d,0` never ran. It never returns at all: a marker printed
+before `call 08000h` appears and one printed after it does not.
+
+**Every primitive it needs works.** Each of these was run standalone from the
+common bank and came back with the right answer:
+
+- `LDIR` into the common bank -- source and destination dump identically.
+- The bank switch itself, for values 00h, 01h, 0Fh, 80h, 81h and 8Fh.
+- Instruction fetch from the high window while a RAM bank is selected -- the
+  prober executes two.
+- A data read of the high window while banked: returns the 5Ah put there.
+- A write to `4000h` and a read straight back while banked: returns 5Ah.
+- Selecting 81h, the common bank, into the low window as well, so both
+  windows alias the same RAM: still returns 5Ah.
+- The common bank's contents across a switch: `D3 78 AF D3 7C C9 00 00`
+  before and after, unchanged.
+
+**And yet the checker dies on its first `out (78h),a`.** Running it verbatim
+with a progress byte written to the common bank after each step -- and
+reading that byte back on the next pass, because the machine runs off into
+zeros and wraps to 0000h rather than resetting, so RAM survives -- gives
+`died 01`: past "entered the loop body", not past "survived the bank switch".
+That is the same instruction, with the same value in A, that the standalone
+prober performs happily.
+
+So it is not the instruction, not the value, not the window and not the
+sequence: it is where the code sits. That is the shape of a marginal path,
+not a logic error, which fits everything else -- the netlist runs the whole
+monitor correctly in `make gatesim`, and nextpnr does no hold analysis on
+this family at all.
+
+`MEM_WAIT = 1` does not change it, so it is not the memory path wanting more
+time. Neither did halving the clock, recorded earlier. Both of those argue
+against a setup problem and leave hold, which nothing in this flow can see.
+
+`sw/diag.z80` is in the tree because the next person needs the harness more
+than the conclusion: build it over `top.sv` with `ROM_INIT` pointed at it,
+and it prints. The survive-your-own-crash trick -- a flag and a progress byte
+in the common bank, checked on entry -- is what makes a fault that kills the
+CPU measurable at all.
+
 ## Reading it without a console
 
 **The monitor itself now says on the LEDs what it says on the console**, so

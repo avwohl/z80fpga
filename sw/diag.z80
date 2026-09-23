@@ -1,0 +1,176 @@
+; How far does sw/boot.z80's actual checker get?
+;
+; Every primitive it needs has now been shown to work on this board: the bank
+; switch, instruction fetch from the high window while banked, a data read
+; from the high window while banked, a write and read-back of the low window
+; while banked, selecting the common bank into the low window as well, and
+; LDIR.  The common bank's contents survive a switch.  And yet the checker
+; itself never returns.
+;
+; So run the checker verbatim, with a progress byte written into the common
+; bank after each phase.  The machine does not really reset when it dies -- it
+; runs off into zeros and wraps to 0000h -- so RAM survives, and the second
+; pass prints how far the first got.
+;
+;   01  entered the write loop body
+;   02  survived the bank switch
+;   03  survived the write to 4000h
+;   04  survived the write to 4001h
+;   11  write loop done
+;   22  read loop done
+;   33  ROM restored, about to return
+
+UART_ST  equ 000h
+UART_DAT equ 001h
+BANK_RAM equ 078h
+BANK_ROM equ 07Ch
+RAM_BASE equ 080h
+RAM_N    equ 2
+FLAG     equ 09000h
+PROG     equ 09002h
+ERRS     equ 09003h
+
+         org 0000h
+
+start:   di
+         ld sp,0FFF0h
+
+         ld a,(FLAG)
+         cp 05Ah
+         jr nz,first
+
+         ld hl,m_died
+         call puts
+         ld a,(PROG)
+         call puthex
+         ld a,' '
+         call putc
+         ld a,(ERRS)
+         call puthex
+         call crlf
+         jr fin
+
+first:   ld hl,m_hi
+         call puts
+         xor a
+         ld (PROG),a
+         ld a,0EEh
+         ld (ERRS),a
+         ld a,05Ah
+         ld (FLAG),a
+
+         ld hl,bt_start
+         ld de,08000h
+         ld bc,bt_end-bt_start
+         ldir
+         call 08000h
+         ld (ERRS),a
+
+         ld hl,m_ok
+         call puts
+         ld a,(PROG)
+         call puthex
+         ld a,' '
+         call putc
+         ld a,(ERRS)
+         call puthex
+         call crlf
+
+fin:     ld hl,m_end
+         call puts
+hang:    jr hang
+
+; ---------------------------------------------------------------- console
+putc:    push af
+putc1:   in a,(UART_ST)
+         bit 1,a
+         jr z,putc1
+         pop af
+         out (UART_DAT),a
+         ret
+
+puts:    ld a,(hl)
+         or a
+         ret z
+         call putc
+         inc hl
+         jr puts
+
+crlf:    ld a,0Dh
+         call putc
+         ld a,0Ah
+         jp putc
+
+puthex:  push af
+         rrca
+         rrca
+         rrca
+         rrca
+         call phnib
+         pop af
+phnib:   and 0Fh
+         add a,090h
+         daa
+         adc a,040h
+         daa
+         jp putc
+
+; ------------------------- sw/boot.z80's checker, with progress markers
+bt_start:
+         ld c,RAM_BASE
+         ld b,RAM_N
+btw:     ld a,001h
+         ld (PROG),a
+         ld a,c
+         out (BANK_RAM),a
+         ld a,002h
+         ld (PROG),a
+         ld a,c
+         ld (4000h),a
+         ld a,003h
+         ld (PROG),a
+         ld a,c
+         xor 0FFh
+         ld (4001h),a
+         ld a,004h
+         ld (PROG),a
+         inc c
+         djnz btw
+
+         ld a,011h
+         ld (PROG),a
+
+         ld c,RAM_BASE
+         ld b,RAM_N
+         ld d,0
+btr:     ld a,c
+         out (BANK_RAM),a
+         ld a,(4000h)
+         cp c
+         jr z,btr1
+         inc d
+btr1:    ld a,(4001h)
+         ld e,a
+         ld a,c
+         xor 0FFh
+         cp e
+         jr z,btr2
+         inc d
+btr2:    inc c
+         djnz btr
+
+         ld a,022h
+         ld (PROG),a
+
+         xor a
+         out (BANK_ROM),a
+         ld a,033h
+         ld (PROG),a
+         ld a,d
+         ret
+bt_end:
+
+m_hi:    db "fine", 0Dh, 0Ah, 0
+m_ok:    db "ok   ", 0
+m_died:  db "died ", 0
+m_end:   db "end", 0Dh, 0Ah, 0
