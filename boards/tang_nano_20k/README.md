@@ -478,6 +478,16 @@ noting that FT_PROG needs FTDI's own D2XX driver on interface 0, which Zadig
 has replaced with WinUSB, so that has to be put back first. Re-flashing a
 BL616 is not the procedure for this part.
 
+Reading that EEPROM from a script here does not work, which is worth knowing
+before spending an hour on it. `pyftdi` over the OSS CAD Suite's own
+`libusb-1.0.dll` enumerates the device and reads its string descriptors --
+serial `2025030317`, product `USB Debugger` -- but the FTDI vendor request
+for an EEPROM word (`bmRequestType 0xC0`, `bRequest 0x90`) returns `0xFFFF`
+for every address, including word 1, which must read `0403`. Claiming the
+interface and setting the configuration change nothing. Windows is not
+passing the vendor transfer through, so the read is not blank silicon, it is
+no answer at all. FT_PROG with the D2XX driver is the way to look.
+
 **Its serial channel has failed, and that is now proved rather than
 inferred.** `make beacon` builds a console beacon with no Z80 in it -- a
 counter writing `0x55` to the UART's data port about 103 times a second, so
