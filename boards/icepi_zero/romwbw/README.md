@@ -51,6 +51,24 @@ blocks — a stock RomWBW `.rom` is 512 KB, which is 1024 of them.
 `ROM_LBA` and `ROM_BLOCKS` in `top_romwbw.sv` are both parameters if a
 different layout suits you better.
 
+**The card is used raw, from block 0.** Unit 0 starts there, so anything a
+host filesystem put on the card is in the way of `C:` and will be overwritten
+the moment CP/M writes to it -- and, the other way round, a host that decides
+to "repair" the card can walk over the CP/M slices. A freshly formatted card
+is not a blank card: Windows writes a partition table, a FAT boot sector and a
+`System Volume Information` directory, all inside unit 0. None of that stops
+the ROM image being read, because 0x400000 is clear of both units, so a card
+prepared only for the ROM will stage and boot while still looking like an
+empty FAT32 volume to the host. It is the first write to `C:` that settles
+which of the two owns the card.
+
+On Windows, `dd` is not the way to write the image. Raw writes to sectors
+inside a mounted volume are refused, and removable media will not go offline
+the way a fixed disk will; the supported route is to lock and dismount the
+volume, hold that handle open for the write, and let it remount when the
+handle closes. Whatever does it should read the image back off the card
+afterwards rather than trusting the write.
+
 ### Writing a prepared image instead of running FDISK80
 
 The slices can be written on from the host instead of made inside the machine,
