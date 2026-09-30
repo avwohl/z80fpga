@@ -10,7 +10,7 @@
 # back, and that is all. It is enough for the RomWBW boot loader and the CP/M
 # command line. It is *not* a VT100, so full-screen programs -- WordStar, ZDE,
 # Zork's status line -- will not draw properly. Install PuTTY or Tera Term for
-# those; see the README.
+# those; see "The serial console" in docs/boards.md for the settings.
 #
 # Only one program can hold a COM port at a time, so close this before running
 # anything else that opens the port, and vice versa.

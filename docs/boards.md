@@ -53,6 +53,35 @@ card.
 made writes fail -- a wait reply one clock too late to stall the read it
 belonged to -- and the measurement traps it cost along the way.
 
+## The serial console
+
+Every board's console runs at 115200 8N1 with no flow control. Each board's
+README says which port and pins carry the console.
+
+`tools/console.ps1` is a minimal Windows terminal that needs nothing installed:
+
+```
+powershell -ExecutionPolicy Bypass -File tools/console.ps1 -Port COM3
+```
+
+`console.ps1` is enough for the RomWBW boot loader and the CP/M command line.
+`console.ps1` is not a VT100, so full-screen programs such as WordStar, ZDE and
+Zork's status line do not draw properly. For those programs use a terminal
+emulator:
+
+- **PuTTY**: connection type Serial, serial line `COMn`, speed 115200. Under
+  Connection > Serial, set flow control to None.
+- **Tera Term**: New connection > Serial, pick the port. Under Setup > Serial
+  port, set 115200, 8 data bits, no parity, 1 stop bit, flow control none.
+  Under Setup > Terminal, set the terminal ID to VT100.
+- **Linux or macOS**: `picocom -b 115200 /dev/ttyUSB1` or
+  `screen /dev/ttyUSB1 115200`. The device name depends on the board and the
+  host.
+
+Only one program can hold a serial port at a time. Close one terminal before
+opening another, and close the terminal before a tool that shares the port,
+such as the Icepi Zero's programmer.
+
 ## Third-party files and the RomWBW ROM
 
 The two `mig.prj` files are Digilent's, from their
