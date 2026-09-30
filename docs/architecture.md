@@ -165,3 +165,23 @@ counts them, against the iCE40's 4641 — a difference in how carry logic is
 accounted for as much as in how much logic there is. Only one block RAM this
 time, because an ECP5's is 18 Kbit rather than 4 Kbit and all 1280 dispatch
 entries fit in one.
+
+## The core's ports
+
+```
+z80_core #(.STROBE_1T(1)) (
+    clk, rst_n, clk_en,
+    a, din, dout,
+    mreq_n, iorq_n, rd_n, wr_n, m1_n, rfsh_n, halt_n, busak_n,
+    wait_n, int_n, nmi_n, busrq_n
+);
+```
+
+One `clk_en` tick is one T-state, so the CPU speed is set by how often you
+raise it; tie it high to run at the fabric clock. The pins behave like the
+part: M1 with a refresh address on T3–T4, 3-T memory cycles, 4-T I/O cycles,
+WAIT stretching, and NMI, IM 0, IM 1 and IM 2 interrupt acknowledge.
+
+`STROBE_1T` picks between the one-T-state strobes the test suite models
+(default, and what a synchronous FPGA memory wants) and holding MREQ/RD/WR
+across the cycle the way the real part drives an external bus.
