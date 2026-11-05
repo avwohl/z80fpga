@@ -4,6 +4,37 @@
 
 ### Added
 
+- `docs/macos.md`: what to install on a Mac (Homebrew `icarus-verilog`,
+  `verilator`, `openfpgaloader`; `pyserial`; um80 and a GDB with the Z80
+  target), and how to run the simulation, lint, the board's JTAG and console,
+  and the GDB bridge from macOS. Measured on 2026-11-05 on macOS 27 arm64 with
+  a Nexys A7-100T on USB: `openFPGALoader -b nexys_a7_100 --detect` read
+  idcode 0x3631093 through macOS's own FTDI driver, and the console on
+  `/dev/cu.usbserial-...1` gave the RomWBW boot prompt and the help text.
+  `make test` (with the opcode suite), `make test-debug` and `make lint`
+  pass. Not on a Mac: Vivado, so no bitstream was built or loaded, and the
+  debug unit did not run on the board (it also needs a USB-serial adapter on
+  Pmod JA). `docs/boards.md` gives the macOS device name.
+- The GDB bridge (`tools/z80dbg_bridge.py`) follows the 2026-11-05 changes to
+  cpmemu's stub (cpmemu 4.12.0). `monitor wait-program bytes HEX...` and
+  `sha256 LENGTH HEX64` stop the target when a program with those bytes
+  starts at 0100H in the program bank (8EH, `--program-bank XX`). The rule
+  holds one hardware breakpoint, limited to that bank. The stop is a plain
+  `T05`, so `monitor wait-program` and `continue` stop GDB, and udb80
+  `--wait-program` (um80 0.4.2) works. `swbreak` and `hwbreak` go only to a
+  client that offered them in `qSupported`. `--listen-addr ADDR` puts the
+  bridge on the network, with a no-password warning outside 127.0.0.0/8.
+  `tools/test_z80dbg_bridge.py`: 253 checks (130 before). Against the old
+  bridge, given a `program_bank` argument so that the test can start, 25
+  checks failed before the run stopped on the missing `--listen-addr`. A
+  review found that a non-ASCII digit in a `wait-program sha256` length, or
+  a bad hex word in `monitor bank`, ended the bridge with a `ValueError`; a
+  word that does not parse is now `E01` or the error text. On the cosim, GDB 18.1 stopped at
+  `start ()` with `Program received signal SIGTRAP` in bank 80H, also over
+  the LAN address with `--listen-addr 0.0.0.0`. udb80 0.4.2 `--wait-program`
+  stopped at 0100H, and `break wp.mac:3`, `continue` and `bt` worked, which
+  was `MANUAL_CHECKS.md` item 13 (deleted). The board run is item 12.
+
 - `make romwbw-debug` (`sim/tb_romwbw_dbg.sv`): the debug unit on RomWBW 3.6.0
   (`SBC_simh_std.rom`, 512 KB). Reads ROM banks through the override and
   compares them with the image, steps `JP 056CH`, runs to a bank-qualified
@@ -31,6 +62,15 @@
   the build is unchanged. `MANUAL_CHECKS.md` has the first run on the board.
 
 ### Fixed
+
+- `tools/run_sst.py --all` with no suite at the default path (a Windows path,
+  `C:/temp/tools/z80tests`) said `name some opcodes, or pass --all` although
+  `--all` was given, so `make test` failed with that text on a Mac. It now
+  says that no SingleStepTests suite is at the path, and how to get one.
+
+- `make test-debug` ran `python`, which macOS does not have, so the bridge
+  test failed with `make: python: No such file or directory`. The Makefile
+  uses `python3` when `python3` runs, else `python`.
 
 - A write to PC through the debug unit now clears the HALT state of the core.
   Before the change, a core that stopped on a HALT instruction stayed in HALT

@@ -10,6 +10,7 @@ bridge drives a vvp simulation of the whole SoC with the debug unit in it
 expected value comes from its listing.  Nothing in the exchange is a model of
 the unit: the answers are the RTL's.
 """
+import hashlib
 import os
 import socket
 import sys
@@ -34,8 +35,8 @@ def check(what, got, want):
 
 
 class Rsp(object):
-    def __init__(self, port):
-        self.s = socket.create_connection(("127.0.0.1", port))
+    def __init__(self, port, host="127.0.0.1"):
+        self.s = socket.create_connection((host, port))
         self.s.settimeout(60)
         self.buf = b""
 
@@ -81,6 +82,89 @@ def reg(g, name):
     return zb.parse16le(g[4 * i:4 * i + 4])
 
 
+def lan_address():
+    """An IPv4 address of this host that is not loopback, or None.  A UDP
+    connect sends nothing; it only makes the system choose an interface."""
+    u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        u.connect(("192.0.2.1", 9))
+        addr = u.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        u.close()
+    return None if addr.startswith("127.") or addr == "0.0.0.0" else addr
+
+
+def start_bridge(vvp, *args):
+    """The bridge's own main(), on the cosim: (process, port)."""
+    import subprocess
+    import tempfile
+    import time
+    pf = os.path.join(tempfile.mkdtemp(prefix="z80dbg."), "port")
+    proc = subprocess.Popen([sys.executable, os.path.join(ROOT, "tools", "z80dbg_bridge.py"),
+                             "--vvp", vvp, "--listen", "0", "--port-file", pf] + list(args),
+                            cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.PIPE, universal_newlines=True)
+    for _ in range(600):
+        if os.path.exists(pf) and open(pf).read().endswith("\n"):
+            return proc, int(open(pf).read())
+        if proc.poll() is not None:
+            break
+        time.sleep(0.05)
+    proc.kill()
+    raise RuntimeError("the bridge gave no port: " + proc.stderr.read())
+
+
+def refused(host, port):
+    try:
+        socket.create_connection((host, port), timeout=5).close()
+    except OSError:
+        return True
+    return False
+
+
+def stop_bridge(proc, c):
+    c.s.sendall(b"$k#6b")
+    proc.wait(30)
+    return proc.stderr.read()
+
+
+def check_listen_addr(vvp):
+    """--listen-addr through main(): the address, the warning, the refusals."""
+    import subprocess
+    for bad in ("localhost", "1.2.3", "300.1.1.1"):
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "z80dbg_bridge.py"),
+                            "--vvp", vvp, "--listen-addr", bad], cwd=ROOT,
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+        check("--listen-addr %s is refused" % bad,
+              r.returncode == 2 and "an IPv4 address" in r.stderr, True)
+    lan = lan_address()
+    proc, port = start_bridge(vvp)
+    if lan:
+        check("by default the bridge refuses %s" % lan, refused(lan, port), True)
+    c = Rsp(port)
+    check("by default: ? on 127.0.0.1", c.ask("?"), "T05")
+    err = stop_bridge(proc, c)
+    check("by default: listening on 127.0.0.1, no warning",
+          "listening on 127.0.0.1:" in err and "WARNING" not in err, True)
+    if not lan:
+        print("NOTE: no LAN address on this host; the --listen-addr LAN checks were not run")
+        return
+    proc, port = start_bridge(vvp, "--listen-addr", "0.0.0.0")
+    c = Rsp(port, lan)
+    check("--listen-addr 0.0.0.0: ? on %s" % lan, c.ask("?"), "T05")
+    check("--listen-addr 0.0.0.0: wait-program from the network",
+          bytes.fromhex(c.ask("qRcmd," + b"wait-program".hex())).decode(), "wait-program: not armed\n")
+    err = stop_bridge(proc, c)
+    check("--listen-addr 0.0.0.0 prints the warning", "WARNING: listening on 0.0.0.0" in err, True)
+    proc, port = start_bridge(vvp, "--listen-addr", lan)
+    check("--listen-addr %s refuses 127.0.0.1" % lan, refused("127.0.0.1", port), True)
+    c = Rsp(port, lan)
+    check("--listen-addr %s: ? on %s" % (lan, lan), c.ask("?"), "T05")
+    stop_bridge(proc, c)
+
+
 def main():
     vvp = "sim/tb_debug_cosim.vvp"
     if not os.path.exists(vvp):
@@ -91,7 +175,9 @@ def main():
     transport = zb.VvpTransport(vvp, cwd=ROOT)
     unit = zb.Unit(transport)
     unit.sync()
-    bridge = zb.Bridge(unit, poll=0)
+    # The cosim has RAM banks 80H and 81H only, so wait-program waits in 80H,
+    # where the program calls its routine at 0100H.
+    bridge = zb.Bridge(unit, poll=0, program_bank=0x80)
     ls = socket.socket()
     ls.bind(("127.0.0.1", 0))
     ls.listen(1)
@@ -193,6 +279,98 @@ def main():
     check("monitor status shows the CPU bank", "cpu-bank=80" in status, True)
     c.ask("qRcmd," + b"break-bank off".hex())
 
+    # ---- stop reasons only for a client that asked for them
+    c.ask("z0,0100,1")
+    c.ask("z1,8026,1")
+    c.ask("qSupported:multiprocess+;vContSupported+")
+    check("Z0 800f again", c.ask("Z0,800f,1"), "OK")
+    check("P5 to the start, no swbreak+", c.ask("P5=" + zb.hex16le(0x8000)), "OK")
+    check("without swbreak+ a Z0 stop is a plain T05", c.ask("c"), "T05")
+    check("z0 800f", c.ask("z0,800f,1"), "OK")
+    check("Z1 8026, no hwbreak+", c.ask("Z1,8026,1"), "OK")
+    check("without hwbreak+ a Z1 stop is a plain T05", c.ask("c"), "T05")
+    c.ask("qSupported:multiprocess+;swbreak+;hwbreak+")
+
+    # ---- monitor wait-program: the program at 0100H in bank 80H is 06 5A C9
+    def mon(text):
+        return bytes.fromhex(c.ask("qRcmd," + text.encode().hex())).decode()
+
+    check("wait-program, not armed", mon("wait-program"), "wait-program: not armed\n")
+    check("wait-program bytes, a program that is not there",
+          mon("wait-program bytes 06 5a c8").startswith("wait-program: armed; the next start at 0100H in bank 80"),
+          True)
+    check("P5 to the start, rule armed", c.ask("P5=" + zb.hex16le(0x8000)), "OK")
+    looked = []
+    real_matches = bridge.program_matches
+    bridge.program_matches = lambda: looked.append(real_matches()) or looked[-1]
+    check("a start that does not match runs on to the end", c.ask("c"), "T05hwbreak:;")
+    check("the rule stopped at 0100H once and the bytes did not match", looked, [False])
+    bridge.program_matches = real_matches
+    check("pc at the end after a miss", reg(c.ask("g"), "pc"), 0x8026)
+    check("the rule is still armed after a miss", mon("wait-program"), "wait-program: armed, 3 bytes\n")
+    check("wait-program bytes, the routine", mon("wait-program bytes 065ac9").startswith("wait-program: armed"), True)
+    check("P5 to the start, the routine", c.ask("P5=" + zb.hex16le(0x8000)), "OK")
+    check("the start that matches stops with a plain T05", c.ask("c"), "T05")
+    check("pc at 0100H", reg(c.ask("g"), "pc"), 0x0100)
+    st = mon("status")
+    check("the rule fired once", "wait-program: not armed" in st, True)
+    check("the break bank is the program's", "break-bank=80" in st and "cpu-bank=80" in st, True)
+    mon("break-bank off")
+
+    sha = hashlib.sha256(bytes.fromhex("065ac9")).hexdigest()
+    check("wait-program sha256", mon("wait-program sha256 3 " + sha).startswith("wait-program: armed"), True)
+    check("status shows the SHA-256", ("armed, 3 bytes with SHA-256 " + sha) in mon("status"), True)
+    check("P5 to the start, sha256", c.ask("P5=" + zb.hex16le(0x8000)), "OK")
+    check("sha256: the start stops with T05", c.ask("c"), "T05")
+    check("sha256: pc at 0100H", reg(c.ask("g"), "pc"), 0x0100)
+    mon("break-bank off")
+
+    # the debugger's own breakpoint at 0100H comes first, and the rule stays
+    check("Z0 0100 with the rule", c.ask("Z0,0100,1"), "OK")
+    mon("wait-program bytes 065ac9")
+    check("P5 to the start, both", c.ask("P5=" + zb.hex16le(0x8000)), "OK")
+    check("the debugger's breakpoint wins at 0100H", c.ask("c"), "T05swbreak:;")
+    check("the rule did not fire", mon("wait-program"), "wait-program: armed, 3 bytes\n")
+    check("z0 0100", c.ask("z0,0100,1"), "OK")
+    check("wait-program off", mon("wait-program off"), "wait-program: off\n")
+
+    # the rule waits in the program bank only: with 81H, the start in 80H is not seen
+    bridge.program_bank = 0x81
+    mon("wait-program bytes 065ac9")
+    check("Z1 8026, other bank", c.ask("Z1,8026,1"), "OK")
+    check("P5 to the start, other bank", c.ask("P5=" + zb.hex16le(0x8000)), "OK")
+    check("a start in bank 80H does not stop a rule for bank 81H", c.ask("c"), "T05hwbreak:;")
+    check("the rule for bank 81H is still armed", mon("wait-program"), "wait-program: armed, 3 bytes\n")
+    mon("wait-program off")
+    check("z1 8026, other bank", c.ask("z1,8026,1"), "OK")
+    bridge.program_bank = 0x80
+
+    # a word that does not parse is an error reply, and the bridge goes on
+    check("wait-program sha256, a length that is not ASCII digits",
+          mon("wait-program sha256 \u00b2 " + "0" * 64).startswith("wait-program sha256: give"), True)
+    check("monitor bank zz is E01", c.ask("qRcmd," + b"bank zz".hex()), "E01")
+    check("the bridge still answers after E01", c.ask("?"), "T05")
+
+    check("wait-program bytes, odd digits", mon("wait-program bytes 065"),
+          "wait-program bytes: give 1 to 4096 bytes as hex digits\n")
+    check("wait-program bytes, not hex", mon("wait-program bytes zz"), "wait-program bytes: not a hex digit\n")
+    check("wait-program sha256, bad", mon("wait-program sha256 0 " + sha).startswith("wait-program sha256: give"), True)
+    check("wait-program, unknown form", mon("wait-program frob"),
+          "wait-program: bytes HEX..., sha256 LENGTH HEX64, or off\n")
+
+    # the rule holds one of the four hardware breakpoints while it is armed
+    check("z1 8026 before the slot count", c.ask("z1,8026,1"), "OK")
+    mon("wait-program bytes 065ac9")
+    three = [c.ask("Z0,%x,1" % a) for a in (0x8000, 0x8001, 0x8002, 0x8003)]
+    check("with the rule armed, three breakpoints fit", three, ["OK"] * 3 + ["E0e"])
+    mon("wait-program off")
+    check("wait-program with every breakpoint in use",
+          (mon("wait-program bytes 065ac9") if c.ask("Z0,8003,1") == "OK" else ""),
+          "wait-program: no free breakpoint; the unit has 4, and each one is in use\n")
+    for a in (0x8000, 0x8001, 0x8002, 0x8003):
+        c.ask("z0,%x,1" % a)
+    mon("break-bank off")
+
     # ---- only four hardware breakpoints
     for a in (0x8000, 0x8001, 0x8002, 0x8003, 0x8004):
         c.ask("z0,%x,1" % a)
@@ -235,6 +413,7 @@ def main():
 
     th.join(10)
     transport.close()
+    check_listen_addr(vvp)
     print("%s: %d checks, bridge against the RTL" % ("PASS" if not fails else "FAIL", checks))
     sys.exit(1 if fails else 0)
 

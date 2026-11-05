@@ -14,7 +14,9 @@
 # hand them to cmd.exe - where Verilator's wrapper cannot find its own root.
 SHELL   := /bin/sh
 
-PYTHON  ?= python
+# python3 where it runs (macOS and most Linux have no plain python), else
+# python (Windows, where python3 can be the Store's stub, which does not run).
+PYTHON  ?= $(shell python3 -c "" >/dev/null 2>&1 && echo python3 || echo python)
 IVERILOG ?= iverilog
 VVP     ?= vvp
 YOSYS   ?= yosys

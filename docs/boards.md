@@ -74,9 +74,11 @@ emulator:
 - **Tera Term**: New connection > Serial, pick the port. Under Setup > Serial
   port, set 115200, 8 data bits, no parity, 1 stop bit, flow control none.
   Under Setup > Terminal, set the terminal ID to VT100.
-- **Linux or macOS**: `picocom -b 115200 /dev/ttyUSB1` or
-  `screen /dev/ttyUSB1 115200`. The device name depends on the board and the
-  host.
+- **Linux**: `picocom -b 115200 /dev/ttyUSB1` or
+  `screen /dev/ttyUSB1 115200`. The device name depends on the board.
+- **macOS**: `screen /dev/cu.usbserial-SERIAL1 115200`. The Nexys A7 shows two
+  devices, and the console is the one that ends in 1. See
+  [macos.md](macos.md).
 
 Only one program can hold a serial port at a time. Close one terminal before
 opening another, and close the terminal before a tool that shares the port,

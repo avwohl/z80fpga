@@ -207,6 +207,10 @@ def main():
     if a.all:
         names = sorted(os.path.basename(p)[:-5]
                        for p in glob.glob(os.path.join(a.suite, "v1", "*.json")))
+        if not names:
+            ap.error("--all: no SingleStepTests suite at %s (no v1/*.json there). Clone "
+                     "https://github.com/SingleStepTests/z80 and set Z80_TESTS or --suite "
+                     "to the clone" % a.suite)
     else:
         names = a.opcodes
     if not names:

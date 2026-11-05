@@ -19,13 +19,25 @@ Nothing is written into the target's memory to make a breakpoint.
 `monitor` commands, the same words as romwbw_emu's stub where it has them:
   monitor bank XX|cur      show bank XX in the low 32 KB, or the CPU's own
   monitor break-bank XX|off   breakpoints below 8000H apply only in bank XX
+  monitor wait-program bytes HEX... | sha256 LENGTH HEX64 | off
+                           stop when a program with those bytes starts at
+                           0100H in the program bank (8EH, --program-bank)
   monitor status           the unit's state
+
+A stop reply names swbreak or hwbreak only for a client that offered it in
+qSupported, and the wait-program stop is a plain T05: no debugger set that
+breakpoint, and GDB continues past a swbreak it does not know.
+
+--listen-addr puts the bridge on a network address.  The bridge has no
+password, and a client can read and write the target's memory.
 
 --vvp runs the Icarus simulation of the whole SoC as the target, one command
 per line over a pipe (sim/tb_debug_cosim.sv), which is how the bridge is tested
 without a board.
 """
 import argparse
+import hashlib
+import ipaddress
 import os
 import select
 import socket
@@ -338,15 +350,24 @@ class Client(object):
         return False
 
 
+PROGRAM_ADDR = 0x0100
+
+
 class Bridge(object):
-    def __init__(self, unit, poll=0.005):
+    def __init__(self, unit, poll=0.005, program_bank=0x8E):
         self.u = unit
         self.poll = poll
-        self.slots = [None] * 8            # slot -> (addr, kind) kind 'sw' or 'hw'
+        # slot -> (addr, kind): kind 'sw' or 'hw' for a debugger's breakpoint,
+        # 'rule' for the slot that monitor wait-program holds
+        self.slots = [None] * 8
         self.break_bank = None
         self.view_bank = None
         self.nbp = 4
         self.killed = False
+        self.program_bank = program_bank
+        self.wait = None                   # None, ('bytes', b) or ('sha256', n, hex)
+        self.swbreak_ok = True             # until a qSupported says otherwise
+        self.hwbreak_ok = True
 
     # ------------------------------------------------------------ breakpoints
     def program_bp(self, slot):
@@ -354,13 +375,16 @@ class Bridge(object):
         if entry is None:
             self.u.set_bp(slot, 0, 0, enabled=False)
             return
-        addr, _ = entry
+        addr, kind = entry
+        if kind == "rule":
+            self.u.set_bp(slot, addr, self.program_bank, True, True)
+            return
         q = self.break_bank is not None and addr < 0x8000
         self.u.set_bp(slot, addr, self.break_bank if q else 0, True, q)
 
     def set_break(self, addr, kind):
         for i in range(self.nbp):
-            if self.slots[i] and self.slots[i][0] == addr:
+            if self.slots[i] and self.slots[i][1] != "rule" and self.slots[i][0] == addr:
                 self.slots[i] = (addr, kind)
                 return True
         for i in range(self.nbp):
@@ -372,16 +396,130 @@ class Bridge(object):
 
     def clear_break(self, addr):
         for i in range(self.nbp):
-            if self.slots[i] and self.slots[i][0] == addr:
+            if self.slots[i] and self.slots[i][1] != "rule" and self.slots[i][0] == addr:
                 self.slots[i] = None
                 self.program_bp(i)
 
+    def rule_slot(self):
+        for i in range(self.nbp):
+            if self.slots[i] and self.slots[i][1] == "rule":
+                return i
+        return None
+
+    # ----------------------------------------------------------- wait-program
+    def arm_wait(self, wait):
+        slot = self.rule_slot()
+        if slot is None:
+            for i in range(self.nbp):
+                if self.slots[i] is None:
+                    slot = i
+                    break
+        if slot is None:
+            return ("wait-program: no free breakpoint; the unit has %d, and each one "
+                    "is in use\n" % self.nbp)
+        self.wait = wait
+        self.slots[slot] = (PROGRAM_ADDR, "rule")
+        self.program_bp(slot)
+        return ("wait-program: armed; the next start at %04XH in bank %02X that matches stops\n"
+                % (PROGRAM_ADDR, self.program_bank))
+
+    def disarm_wait(self):
+        self.wait = None
+        slot = self.rule_slot()
+        if slot is not None:
+            self.slots[slot] = None
+            self.program_bp(slot)
+
+    def read_cpu_mem(self, addr, length):
+        """Memory as the CPU sees it, whatever monitor bank shows."""
+        if self.view_bank is not None:
+            self.u.set_override(False)
+        try:
+            return self.u.read_mem(addr, length)
+        finally:
+            if self.view_bank is not None:
+                self.u.set_override(True, self.view_bank)
+
+    def program_matches(self):
+        if self.wait is None:
+            return False
+        if self.wait[0] == "bytes":
+            want = self.wait[1]
+            return self.read_cpu_mem(PROGRAM_ADDR, len(want)) == want
+        got = self.read_cpu_mem(PROGRAM_ADDR, self.wait[1])
+        return hashlib.sha256(got).hexdigest() == self.wait[2]
+
+    def user_break_at(self, pc):
+        """A debugger's breakpoint at pc that applies in the CPU's bank now."""
+        for i in range(self.nbp):
+            e = self.slots[i]
+            if e and e[1] != "rule" and e[0] == pc:
+                if self.break_bank is None or pc >= 0x8000:
+                    return e
+                if (self.u.read_reg(R_BANK) & 255) == self.break_bank:
+                    return e
+        return None
+
+    def monitor_wait_program(self, words):
+        if not words:
+            if self.wait is None:
+                return "wait-program: not armed\n"
+            if self.wait[0] == "sha256":
+                return "wait-program: armed, %d bytes with SHA-256 %s\n" % (self.wait[1], self.wait[2])
+            return "wait-program: armed, %d bytes\n" % len(self.wait[1])
+        kind = words[0].lower()
+        if kind == "off":
+            self.disarm_wait()
+            return "wait-program: off\n"
+        if kind == "bytes":
+            text = "".join(words[1:])
+            if not text or len(text) % 2 or len(text) > 2 * 4096:
+                return "wait-program bytes: give 1 to 4096 bytes as hex digits\n"
+            try:
+                want = bytes.fromhex(text)
+            except ValueError:
+                return "wait-program bytes: not a hex digit\n"
+            return self.arm_wait(("bytes", want))
+        if kind == "sha256":
+            limit = 0xFE00 - PROGRAM_ADDR
+            ok = (len(words) == 3 and words[1] != "" and all(ch in "0123456789" for ch in words[1])
+                  and 1 <= int(words[1]) <= limit)
+            sha = words[2].lower() if len(words) == 3 else ""
+            ok = ok and len(sha) == 64 and all(c in "0123456789abcdef" for c in sha)
+            if not ok:
+                return ("wait-program sha256: give the length in decimal (1 to %d) and "
+                        "64 hex digits\n" % limit)
+            return self.arm_wait(("sha256", int(words[1]), sha))
+        return "wait-program: bytes HEX..., sha256 LENGTH HEX64, or off\n"
+
     # ------------------------------------------------------------- run control
+    def break_reply(self, entry):
+        if entry and entry[1] == "hw":
+            return "T05hwbreak:;" if self.hwbreak_ok else "T05"
+        return "T05swbreak:;" if self.swbreak_ok else "T05"
+
     def stop_reply(self, st, interrupted):
+        """The stop reply, or None: a wait-program stop on a program that does
+        not match, after which the run goes on."""
         # A step that lands on a breakpoint's address is a step, not a hit.
         if st.by_bp and not st.by_step:
             entry = self.slots[st.bp_index] if st.bp_index < len(self.slots) else None
-            return "T05hwbreak:;" if entry and entry[1] == "hw" else "T05swbreak:;"
+            if entry and entry[1] == "rule":
+                user = self.user_break_at(PROGRAM_ADDR)
+                if user:
+                    return self.break_reply(user)     # the debugger's own breakpoint first
+                if not self.program_matches():
+                    return None
+                # One shot.  The program is found, and its breakpoints belong to its bank.
+                self.disarm_wait()
+                self.break_bank = self.program_bank
+                for i in range(self.nbp):
+                    if self.slots[i]:
+                        self.program_bp(i)
+                sys.stderr.write("[z80dbg bridge: the program that wait-program named has "
+                                 "started in bank %02X]\n" % self.program_bank)
+                return "T05"
+            return self.break_reply(entry)
         if interrupted:
             return "T02"
         return "T05"
@@ -395,7 +533,13 @@ class Bridge(object):
         while True:
             st = self.u.status()
             if st.stopped:
-                return self.stop_reply(st, interrupted and not st.by_bp)
+                reply = self.stop_reply(st, interrupted and not st.by_bp)
+                if reply is not None:
+                    return reply
+                if interrupted:
+                    return "T02"
+                self.u.cont()                      # not the program: go on
+                continue
             if not interrupted and client.interrupt_pending():
                 self.u.halt()
                 interrupted = True
@@ -431,16 +575,19 @@ class Bridge(object):
                     self.program_bp(i)
             return ("breakpoints apply in every bank\n" if self.break_bank is None
                     else "breakpoints below 8000H apply in bank %02X only\n" % self.break_bank)
+        if words[0] == "wait-program":
+            return self.monitor_wait_program(words[1:])
         if words[0] == "status":
             st = self.u.status()
             pc = self.u.read_reg(R_PC)
             cpu_bank = self.u.read_reg(R_BANK) & 255
-            return ("%s pc=%04X cpu-bank=%02X view=%s break-bank=%s breakpoints=%d\n" % (
+            return ("%s pc=%04X cpu-bank=%02X view=%s break-bank=%s breakpoints=%d\n%s" % (
                 "stopped" if st.stopped else "running", pc, cpu_bank,
                 "cur" if self.view_bank is None else "%02X" % self.view_bank,
                 "off" if self.break_bank is None else "%02X" % self.break_bank,
-                sum(1 for s in self.slots if s)))
-        return "unknown monitor command; try bank, break-bank, status\n"
+                sum(1 for s in self.slots if s and s[1] != "rule"),
+                self.monitor_wait_program([])))
+        return "unknown monitor command; try bank, break-bank, wait-program, status\n"
 
     def handle(self, client, p):
         """Answer one packet.  Returns False when the debugger has gone."""
@@ -527,6 +674,9 @@ class Bridge(object):
         elif p[0] in "HT":
             client.send("OK")
         elif p.startswith("qSupported"):
+            # A stop reason only for a client that asked for it (the RSP rule).
+            self.swbreak_ok = "swbreak+" in p
+            self.hwbreak_ok = "hwbreak+" in p
             client.send("PacketSize=%x;qXfer:features:read+;swbreak+;hwbreak+;vContSupported+"
                         % PACKET_SIZE)
         elif p == "qAttached":
@@ -573,6 +723,11 @@ class Bridge(object):
                 except UnitError as e:
                     sys.stderr.write("z80dbg bridge: %s\n" % e)
                     client.send("E01")
+                except ValueError as e:
+                    # A packet or a monitor word that does not parse (a bad hex
+                    # number): an error reply, never the end of the bridge.
+                    sys.stderr.write("z80dbg bridge: bad packet %r: %s\n" % (p[:40], e))
+                    client.send("E01")
 
 
 def main():
@@ -581,9 +736,27 @@ def main():
     src.add_argument("--serial", help="serial device of the unit's UART")
     src.add_argument("--vvp", help="simulation to drive (sim/tb_debug_cosim.vvp)")
     ap.add_argument("--baud", type=int, default=115200)
-    ap.add_argument("--listen", type=int, default=1234, help="TCP port on 127.0.0.1 (0: any)")
+    ap.add_argument("--listen", type=int, default=1234, help="TCP port (0: any)")
+    ap.add_argument("--listen-addr", default="127.0.0.1",
+                    help="IPv4 address to listen on: 127.0.0.1 (the default), 0.0.0.0 for "
+                         "every interface, or the address of one interface.  No password: "
+                         "anyone who reaches it controls the target")
+    ap.add_argument("--program-bank", default="8E",
+                    help="the bank in hex that monitor wait-program waits in (default 8E, "
+                         "where RomWBW's CP/M 2.2 runs a program)")
     ap.add_argument("--port-file", help="write the port number here")
     a = ap.parse_args()
+    try:
+        addr = ipaddress.IPv4Address(a.listen_addr)
+    except ValueError:
+        ap.error("--listen-addr %s: the address is an IPv4 address such as 0.0.0.0 or "
+                 "192.168.1.5" % a.listen_addr)
+    try:
+        program_bank = int(a.program_bank, 16)
+        if not 0 <= program_bank <= 255:
+            raise ValueError
+    except ValueError:
+        ap.error("--program-bank %s: a bank number in hex, 00 to FF" % a.program_bank)
 
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if a.vvp:
@@ -594,14 +767,19 @@ def main():
         poll = 0.005
     unit = Unit(transport)
     unit.sync()
-    bridge = Bridge(unit, poll)
+    bridge = Bridge(unit, poll, program_bank)
 
     ls = socket.socket()
     ls.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    ls.bind(("127.0.0.1", a.listen))
+    ls.bind((str(addr), a.listen))
     ls.listen(1)
     port = ls.getsockname()[1]
-    sys.stderr.write("z80dbg bridge listening on 127.0.0.1:%d\n" % port)
+    if not addr in ipaddress.IPv4Network("127.0.0.0/8"):
+        sys.stderr.write("z80dbg bridge: WARNING: listening on %s, not on 127.0.0.1.  The bridge "
+                         "has no password.\nAnyone who can reach this address can read and "
+                         "write the target's memory and control it.\nUse it on a network you "
+                         "trust.\n" % addr)
+    sys.stderr.write("z80dbg bridge listening on %s:%d\n" % (addr, port))
     if a.port_file:
         with open(a.port_file, "w") as f:
             f.write("%d\n" % port)

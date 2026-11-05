@@ -54,20 +54,18 @@ the unit for the board or run the unit on the board. This check needs Vivado
     Right: GDB stops at ADDR. Run `monitor bank 8E` and `x/16xb 0x100`. Right:
     the bytes differ from the bytes of `monitor bank cur` when the two banks
     differ.
-
-## Debug unit with udb80, no board
-
-GDB 18.1 (`--target=z80-unknown-elf`) ran against the bridge on 2026-11-04:
-`target remote`, `info registers`, `stepi`, `x/8xb 0x0`, `break *0x8000` and
-`continue` worked. udb80 needs a `prog.dbg` for the program, and
-`sim/dbg_prog.z80` is built with `tools/zasm.py`, which writes none.
-
-13. Build a program with `um80 --debug-info` and `ul80 --debug-info`, load
-    the program in the cosim, run `python3 tools/z80dbg_bridge.py --vvp
-    sim/tb_debug_cosim.vvp --listen 1234`, and run `udb80 prog.dbg --connect
-    127.0.0.1:1234`. Right: udb80 connects, `break` on a source line and
-    `continue` stop there, and `bt` shows the callers. Wrong: udb80 refuses
-    the image or reports a protocol error.
+12. Build a CP/M program with `um80 --debug-info` and `ul80 --debug-info`, and
+    put the `.COM` file on the disk of the board. Run `udb80 PROG.dbg
+    --connect 127.0.0.1:1234 --wait-program` (um80 0.4.2 or later), and type
+    the name of the program at the CP/M prompt. Right: udb80 says `The
+    program has started at 0x0100.`, `monitor status` shows `cpu-bank=8E`,
+    and `break` on a source line, `continue` and `bt` work. Then quit udb80,
+    run `monitor break-bank off` (the rule fired once and left the breakpoints
+    on bank 8E), and run the same with GDB: `monitor wait-program sha256
+    LENGTH HEX64`, `continue`, and start the program again at the CP/M
+    prompt. Right: `Program received signal SIGTRAP` at the first line of the
+    program. Wrong: the program runs and nothing stops. Then compare the bank
+    that RomWBW gives the program with `--program-bank` (the default is 8E).
 
 ## Debug unit simulation on Windows
 
@@ -76,6 +74,7 @@ GDB 18.1 (`--target=z80-unknown-elf`) ran against the bridge on 2026-11-04:
 the OSS CAD Suite `vvp` on Windows.
 
 14. On the Windows machine, run `mingw32-make test-debug`. Right: four PASS
-    lines, the last one `PASS: 130 checks, bridge against the RTL`. Wrong: the
+    lines, the last one `PASS: 253 checks, bridge against the RTL` (247, with
+    a `NOTE` line, on a machine with no LAN address). Wrong: the
     bridge test hangs or prints no `READY`. Then change how
     `tb_debug_cosim.sv` reads its input.

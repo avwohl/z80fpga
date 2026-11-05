@@ -122,8 +122,8 @@ belongs to the MMU. A write to register 4, 5, 6, 7 or 15 returns `E 04`.
 
 ## The GDB bridge
 
-`tools/z80dbg_bridge.py` listens on `127.0.0.1` and speaks the GDB remote
-serial protocol. The bridge offers the same packets as the cpmemu stub: `?`, `g`, `G`,
+`tools/z80dbg_bridge.py` listens on `127.0.0.1` by default and speaks the GDB
+remote serial protocol. The bridge offers the same packets as the cpmemu stub: `?`, `g`, `G`,
 `p`, `P`, `m`, `M`, `c`, `s`, `Z0`, `z0`, `Z1`, `z1`, `vCont`, `qSupported`,
 `qXfer:features:read` for `target.xml`, `qRcmd` and the byte 03H. The register set
 is the 13 registers of cpmemu, all 16 bits wide.
@@ -142,7 +142,72 @@ words of romwbw_emu:
   to the bank of the CPU.
 - `monitor break-bank XX` makes breakpoints below 8000H apply in bank XX only.
   `monitor break-bank off` removes the limit.
-- `monitor status` shows the state of the unit.
+- `monitor wait-program bytes HEX...` or `monitor wait-program sha256 LENGTH
+  HEX64` stops the target when a program with those bytes starts at 0100H in
+  the program bank. `monitor wait-program off` removes the rule, and
+  `monitor wait-program` shows it. The forms and the replies are those of
+  romwbw_emu. The bridge is stricter on input: `sha256` takes exactly a
+  decimal length and 64 hex digits, with nothing after them.
+- `monitor status` shows the state of the unit and of the wait-program rule.
+
+### Find a CP/M program: wait-program
+
+RomWBW's CP/M 2.2 loads a `.COM` file into bank 8EH at 0100H. The program bank
+of the bridge is 8EH. `--program-bank XX` sets a different bank. The tests use
+80H, because the cosim has RAM banks 80H and 81H only.
+
+The rule uses one of the hardware breakpoints of the unit, at 0100H, limited
+to the program bank. While the rule is armed, the debugger has one breakpoint
+less. If all the breakpoints are in use, the bridge refuses to arm the rule.
+
+At each stop on the rule, the bridge reads the bytes at 0100H as the CPU sees
+them. When the bytes do not match, the bridge continues the target. When the
+bytes match, the bridge removes the rule and limits the breakpoints to the
+program bank (as `monitor break-bank`). Then it sends the stop reply `T05`. A
+breakpoint of the debugger at 0100H stops the target first, and the rule
+stays armed.
+
+With udb80 (um80 0.4.2 or later):
+
+```
+udb80 PROG.dbg --connect 127.0.0.1:1234 --wait-program
+```
+
+With GDB:
+
+```
+(gdb) target remote :1234
+(gdb) monitor wait-program sha256 LENGTH HEX64
+(gdb) continue
+```
+
+Then start the program at the CP/M prompt. GDB stops with
+`Program received signal SIGTRAP` at the first line of the program. LENGTH and
+HEX64 are `image.length` and `image.sha256` of `PROG.dbg`.
+
+### Stop replies
+
+A stop at a breakpoint is `T05swbreak:;` (`Z0`) or `T05hwbreak:;` (`Z1`), only
+for a client that said `swbreak+` or `hwbreak+` in `qSupported`. GDB says both.
+udb80 says `swbreak+` only and sets `Z0` breakpoints only. A client that said
+neither gets `T05`. The wait-program stop is always `T05`: no debugger set that
+breakpoint, and GDB continues past a `swbreak` that it does not know.
+
+cpmemu's stub (4.12.0 and later) follows the same rule for `swbreak` and gives
+the same `T05` for the wait-program stop. cpmemu has no `hwbreak`: its `Z1`
+works as `Z0`. The `hwbreak` reply is the bridge's own.
+
+### From another machine
+
+The bridge has no password, and a client can read and write the memory of the
+target. By default the bridge listens on 127.0.0.1 only.
+
+Use an SSH tunnel
+(`ssh -N -L 1234:127.0.0.1:1234 USER@BRIDGE-HOST` on the debugger machine). Or
+start the bridge with `--listen-addr ADDR`: `0.0.0.0` for every interface, or
+the IPv4 address of one interface. A name such as `localhost` is refused. For
+an address outside 127.0.0.0/8, the bridge prints a warning. Use the option
+only on a network that you trust.
 
 The unit has 4 breakpoints by default. The bridge answers the fifth `Z0` or `Z1` with `E0e`.
 The unit has no watchpoints, so the bridge answers `Z2` to `Z4` with an empty reply. A `G`
@@ -152,13 +217,14 @@ A changed alternate register returns `E01`.
 ## Tests
 
 `make test-debug` builds and runs four tests. `make test` includes the four tests.
-On the host "Mac" (Icarus Verilog 13.0, `PYTHON=python3`), the results were:
+The Makefile uses `python3` if `python3` runs, and `python` if not. On the
+host "Mac" (Icarus Verilog 13.0), the results were:
 
 ```
 tb_debug.vvp         305 checks, CPU_DIV 1, RAM in block RAM, stopped at reset
 tb_debug_div3.vvp    308 checks, CPU_DIV 3, boot monitor halted in flight
 tb_debug_ddr2.vvp    317 checks, CPU_DIV 3, RAM in DDR2, stack in DDR2
-test_z80dbg_bridge   130 checks, RSP client, bridge, and the RTL
+test_z80dbg_bridge   253 checks, RSP client, bridge, and the RTL
 ```
 
 `sim/tb_debug.sv` plays the host. The bench runs the program in
@@ -177,8 +243,25 @@ DDR2 model.
 output. `tools/test_z80dbg_bridge.py` starts the bridge on this server and
 runs a GDB session through a socket. The answers come from the RTL, not from
 a model. The bench reads standard input through the Icarus descriptor
-`32'h8000_0000`. The author ran the test on macOS only. No one has run the test
-on a Windows build of `vvp`.
+`32'h8000_0000`. The test ran on macOS. No one has run the test on a Windows
+build of `vvp`.
+
+The session also checks these items:
+
+- The stop replies for a client without `swbreak+` and `hwbreak+`.
+- `monitor wait-program` in bank 80H. A start that does not match stops at
+  the rule once and runs on. A start that matches stops with `T05`. The
+  `sha256` form. A rule for bank 81H does not stop a start in bank 80H. A
+  breakpoint of the debugger at 0100H. The error replies, and a bad word,
+  after which the bridge still answers. The breakpoint that the rule holds.
+- `--listen-addr`, with the bridge program itself. Bad addresses are refused.
+  The default refuses the LAN address of the host. `0.0.0.0` takes a client
+  on the LAN address and prints the warning. The address of one interface
+  refuses 127.0.0.1.
+
+The count is 253 on a host with a LAN address (an IPv4 address that is not
+127.x). On a host without one, the test prints a `NOTE` line, does not run the
+six LAN checks, and counts 247.
 
 ### Test on a RomWBW ROM
 
