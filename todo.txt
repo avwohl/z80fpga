@@ -12,3 +12,26 @@ Our repo git@github.com:avwohl/cpmemu.git contains the qkz z80 emulator in c++
 which may be useful. Either as a specification, z80 test tools, or c++ code
 to cross compile to fpga
 
+
+Open items
+==========
+
+[MAC] Check that z80fpga works with GDB after the 2026-11-05 stub changes.
+  The debug unit's RSP bridge (tools/z80dbg_bridge.py) is its own Python
+  code, not cpmemu's gdbstub.cc, so it did not get these changes:
+  - cpmemu 365dfc2 sends swbreak only to a client that said swbreak+ in
+    qSupported, and stops a rule break with a plain T05. The bridge sends
+    T05swbreak:; whatever qSupported says (line 384, qSupported at 529).
+  - cpmemu 07468a3 and romwbw_emu 8e3bf89 have --gdb-listen=ADDR, off by
+    default with a no-password warning. The bridge binds 127.0.0.1 only
+    (line 601).
+  - romwbw_emu, ioscpm, z80cpmw and cpmdroid have monitor wait-program, and
+    udb80 --wait-program needs it. The bridge has bank, break-bank and
+    status only, so udb80 --wait-program fails on it.
+  What to do: decide which of the three the bridge gets, then run GDB 18.1
+  (Z80 target) and udb80 from um80 0.4.2 against the bridge on the cosim
+  (python3 tools/z80dbg_bridge.py --vvp sim/tb_debug_cosim.vvp --listen
+  1234; this Mac has Icarus). Check break, continue, step, bt and ^C, and a
+  CP/M program found by monitor break-bank 8E plus break *0x100 (romwbw_emu
+  docs/GDB.md, Find the program with GDB). The board run is still
+  MANUAL_CHECKS.md, "Debug unit on the Nexys A7-100T" (Vivado and the board).
