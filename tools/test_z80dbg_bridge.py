@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Test the RSP bridge against the RTL.
 
-  make sim/tb_debug_cosim.vvp sim/dbg_prog.hex
-  python3 tools/test_z80dbg_bridge.py
+  make sim/tb_debug_cosim.vvp sim/tb_debug_cosim_jtag.vvp sim/dbg_prog.hex
+  python3 tools/test_z80dbg_bridge.py [--uart-only | --jtag-only]
+
+The whole session runs twice, over the UART cosim and over the JTAG cosim.
 
 An RSP client (this file) talks over a TCP socket to the bridge, and the
 bridge drives a vvp simulation of the whole SoC with the debug unit in it
@@ -96,14 +98,14 @@ def lan_address():
     return None if addr.startswith("127.") or addr == "0.0.0.0" else addr
 
 
-def start_bridge(vvp, *args):
+def start_bridge(vvp, *args, flag="--vvp"):
     """The bridge's own main(), on the cosim: (process, port)."""
     import subprocess
     import tempfile
     import time
     pf = os.path.join(tempfile.mkdtemp(prefix="z80dbg."), "port")
     proc = subprocess.Popen([sys.executable, os.path.join(ROOT, "tools", "z80dbg_bridge.py"),
-                             "--vvp", vvp, "--listen", "0", "--port-file", pf] + list(args),
+                             flag, vvp, "--listen", "0", "--port-file", pf] + list(args),
                             cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                             stderr=subprocess.PIPE, universal_newlines=True)
     for _ in range(600):
@@ -130,17 +132,17 @@ def stop_bridge(proc, c):
     return proc.stderr.read()
 
 
-def check_listen_addr(vvp):
+def check_listen_addr(vvp, flag="--vvp"):
     """--listen-addr through main(): the address, the warning, the refusals."""
     import subprocess
     for bad in ("localhost", "1.2.3", "300.1.1.1"):
         r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "z80dbg_bridge.py"),
-                            "--vvp", vvp, "--listen-addr", bad], cwd=ROOT,
+                            flag, vvp, "--listen-addr", bad], cwd=ROOT,
                            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
         check("--listen-addr %s is refused" % bad,
               r.returncode == 2 and "an IPv4 address" in r.stderr, True)
     lan = lan_address()
-    proc, port = start_bridge(vvp)
+    proc, port = start_bridge(vvp, flag=flag)
     if lan:
         check("by default the bridge refuses %s" % lan, refused(lan, port), True)
     c = Rsp(port)
@@ -151,28 +153,31 @@ def check_listen_addr(vvp):
     if not lan:
         print("NOTE: no LAN address on this host; the --listen-addr LAN checks were not run")
         return
-    proc, port = start_bridge(vvp, "--listen-addr", "0.0.0.0")
+    proc, port = start_bridge(vvp, "--listen-addr", "0.0.0.0", flag=flag)
     c = Rsp(port, lan)
     check("--listen-addr 0.0.0.0: ? on %s" % lan, c.ask("?"), "T05")
     check("--listen-addr 0.0.0.0: wait-program from the network",
           bytes.fromhex(c.ask("qRcmd," + b"wait-program".hex())).decode(), "wait-program: not armed\n")
     err = stop_bridge(proc, c)
     check("--listen-addr 0.0.0.0 prints the warning", "WARNING: listening on 0.0.0.0" in err, True)
-    proc, port = start_bridge(vvp, "--listen-addr", lan)
+    proc, port = start_bridge(vvp, "--listen-addr", lan, flag=flag)
     check("--listen-addr %s refuses 127.0.0.1" % lan, refused("127.0.0.1", port), True)
     c = Rsp(port, lan)
     check("--listen-addr %s: ? on %s" % (lan, lan), c.ask("?"), "T05")
     stop_bridge(proc, c)
 
 
-def main():
-    vvp = "sim/tb_debug_cosim.vvp"
+def run_session(jtag):
+    """The whole session over one link: the UART cosim or the JTAG cosim."""
+    vvp = "sim/tb_debug_cosim_jtag.vvp" if jtag else "sim/tb_debug_cosim.vvp"
+    flag = "--vvp-jtag" if jtag else "--vvp"
+    print("---- link: %s (%s)" % ("JTAG" if jtag else "UART", vvp))
     if not os.path.exists(vvp):
-        sys.exit("%s is missing: make sim/tb_debug_cosim.vvp" % vvp)
+        sys.exit("%s is missing: make %s" % (vvp, vvp))
     image = open("sim/dbg_prog.hex").read().split()
     prog = bytes(int(b, 16) for b in image[0x8000:0x8029])
 
-    transport = zb.VvpTransport(vvp, cwd=ROOT)
+    transport = (zb.VvpJtagTransport if jtag else zb.VvpTransport)(vvp, cwd=ROOT)
     unit = zb.Unit(transport)
     unit.sync()
     # The cosim has RAM banks 80H and 81H only, so wait-program waits in 80H,
@@ -413,7 +418,17 @@ def main():
 
     th.join(10)
     transport.close()
-    check_listen_addr(vvp)
+    check_listen_addr(vvp, flag)
+
+
+def main():
+    links = [False, True]
+    if "--uart-only" in sys.argv:
+        links = [False]
+    elif "--jtag-only" in sys.argv:
+        links = [True]
+    for jtag in links:
+        run_session(jtag)
     print("%s: %d checks, bridge against the RTL" % ("PASS" if not fails else "FAIL", checks))
     sys.exit(1 if fails else 0)
 

@@ -13,7 +13,9 @@
 //     that hdsk's DMA uses, so it reaches block RAM, DDR2 and SDRAM through the
 //     MMU exactly as the CPU's own cycles do.  bank_ovr_en/bank_ovr make the
 //     MMU show a chosen bank in the low window, without touching the CPU's.
-//   * a serial line, on its own pins, so the console stays the guest's.
+//   * a serial line, on its own pins, so the console stays the guest's; or,
+//     with JTAG_LINK = 1, the same bytes over a JTAG data register
+//     (dbg_jtag_link.sv) and no pins at all.
 //
 // Resources: LUTs and flip-flops only.  The block RAM of the Nexys RomWBW
 // build is 94.81% used, and nothing here may add a tile.  The five command
@@ -57,13 +59,25 @@ module dbg_unit #(
     parameter int BP_N          = 4,            // 1 to 8
     parameter bit HALT_ON_RESET = 1'b0,         // 1: stopped at 0000H out of reset
     parameter logic [7:0] COMMON_BANK = 8'h8F,  // the MMU's high-window bank
-    parameter int TIMEOUT_CLKS  = CLK_HZ / 100
+    parameter int TIMEOUT_CLKS  = CLK_HZ / 100,
+    parameter bit JTAG_LINK     = 1'b0          // 1: bytes over JTAG (dbg_jtag_link), not rx/tx
 ) (
     input  logic        clk,
     input  logic        rst_n,
 
+    // the serial line, used when JTAG_LINK = 0
     input  logic        rx,
     output logic        tx,
+
+    // the TAP of a BSCANE2, used when JTAG_LINK = 1 (dbg_jtag_link.sv)
+    input  logic        jt_tck,
+    input  logic        jt_sel,
+    input  logic        jt_capture,
+    input  logic        jt_shift,
+    input  logic        jt_update,
+    input  logic        jt_tdi,
+    input  logic        jt_reset,
+    output logic        jt_tdo,
 
     // the core's clock enable, and the hooks of z80_core.sv
     input  logic        clk_en,
@@ -98,11 +112,26 @@ module dbg_unit #(
   logic       rx_valid, tx_busy, tx_go;
   logic [7:0] rx_data, tx_byte;
 
-  dbg_uart #(.CLK_HZ (CLK_HZ), .BAUD (BAUD)) u_uart (
-      .clk (clk), .rst_n (rst_n), .rx (rx), .tx (tx),
-      .rx_valid (rx_valid), .rx_data (rx_data),
-      .tx_start (tx_go), .tx_data (tx_byte), .tx_busy (tx_busy)
-  );
+  generate
+    if (JTAG_LINK) begin : g_jtag
+      dbg_jtag_link u_link (
+          .clk (clk), .rst_n (rst_n),
+          .rx_valid (rx_valid), .rx_data (rx_data),
+          .tx_start (tx_go), .tx_data (tx_byte), .tx_busy (tx_busy),
+          .tck (jt_tck), .sel (jt_sel), .capture (jt_capture),
+          .shift (jt_shift), .update (jt_update), .tdi (jt_tdi),
+          .reset (jt_reset), .tdo (jt_tdo)
+      );
+      assign tx = 1'b1;
+    end else begin : g_uart
+      dbg_uart #(.CLK_HZ (CLK_HZ), .BAUD (BAUD)) u_uart (
+          .clk (clk), .rst_n (rst_n), .rx (rx), .tx (tx),
+          .rx_valid (rx_valid), .rx_data (rx_data),
+          .tx_start (tx_go), .tx_data (tx_byte), .tx_busy (tx_busy)
+      );
+      assign jt_tdo = 1'b0;
+    end
+  endgenerate
 
   // ------------------------------------------------------------ breakpoints
   logic [BP_N-1:0] bp_hit;

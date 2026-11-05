@@ -52,18 +52,33 @@ module top_romwbw (
     inout  wire  [15:0] ddr2_dq,
     inout  wire  [1:0]  ddr2_dqs_p,
     inout  wire  [1:0]  ddr2_dqs_n
-`ifdef WITH_DEBUG_UNIT
+`ifdef WITH_DEBUG_UART
     ,
     // The debug unit's serial line (docs/debug_unit.md), on Pmod JA pins 1 and
-    // 2 by romwbw_dbg.xdc.  build_romwbw.tcl defines WITH_DEBUG_UNIT only when
-    // the environment variable Z80_DEBUG_UNIT is 1; without it these lines do
-    // not exist and the build is the one that ran on the board.
+    // 2 by romwbw_dbg.xdc.  build_romwbw.tcl defines WITH_DEBUG_UART only when
+    // Z80_DEBUG_UNIT is 1 and Z80_DEBUG_LINK is uart.  With the default link,
+    // JTAG, and without the unit, these lines do not exist.
     input  logic        dbg_rx,
     output logic        dbg_tx
 `endif
 );
 
   localparam int UI_CLK_HZ = 81_250_000;   // 325 MHz / 4
+
+`ifdef WITH_DEBUG_UNIT
+`ifndef WITH_DEBUG_UART
+  // The debug unit over JTAG (docs/debug_unit.md): the user data register of
+  // USER3, through the configuration JTAG pins, so the unit needs no pin.
+  // build_romwbw.tcl defines WITH_DEBUG_UNIT, and leaves WITH_DEBUG_UART
+  // undefined, by default.  No Vivado has run this.
+  logic jt_tck, jt_sel, jt_capture, jt_shift, jt_update, jt_tdi, jt_reset, jt_tdo;
+
+  dbg_bscan_xilinx u_dbg_bscan (
+      .tck (jt_tck), .sel (jt_sel), .capture (jt_capture), .shift (jt_shift),
+      .update (jt_update), .tdi (jt_tdi), .reset (jt_reset), .tdo (jt_tdo)
+  );
+`endif
+`endif
 
   logic clk200, clk100, mmcm_locked;
 
@@ -154,6 +169,9 @@ module top_romwbw (
 `ifdef WITH_DEBUG_UNIT
       .DEBUG_UNIT   (1'b1),
       .DBG_BAUD     (115200),
+`ifndef WITH_DEBUG_UART
+      .DBG_JTAG     (1'b1),
+`endif
       .DBG_BP_N     (4),
       .DBG_HALT_ON_RESET (1'b0),         // 1: stopped at 0000H, before the ROM runs
 `endif
@@ -172,8 +190,14 @@ module top_romwbw (
       // from the bridge's end.
       .uart_cts_n (uart_rts), .uart_rts_n (uart_cts),
       .led (led8), .sw (8'h00),
-`ifdef WITH_DEBUG_UNIT
+`ifdef WITH_DEBUG_UART
       .dbg_rx (dbg_rx), .dbg_tx (dbg_tx),
+`elsif WITH_DEBUG_UNIT
+      .dbg_rx (1'b1), .dbg_tx (),
+      .dbg_jt_tck (jt_tck), .dbg_jt_sel (jt_sel),
+      .dbg_jt_capture (jt_capture), .dbg_jt_shift (jt_shift),
+      .dbg_jt_update (jt_update), .dbg_jt_tdi (jt_tdi),
+      .dbg_jt_reset (jt_reset), .dbg_jt_tdo (jt_tdo),
 `endif
 
       .sd_sck (sd_sck), .sd_mosi (sd_cmd), .sd_miso (sd_dat[0]), .sd_cs (sd_cs),

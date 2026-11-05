@@ -8,7 +8,8 @@
 //   0xFF       r/w    write: LEDs, read: switches
 //
 // DEBUG_UNIT = 1 adds rtl/soc/dbg_unit.sv: halt, step, breakpoints, register
-// and memory access over the serial pair dbg_rx/dbg_tx (docs/debug_unit.md).
+// and memory access over the serial pair dbg_rx/dbg_tx (docs/debug_unit.md),
+// or, with DBG_JTAG = 1, over the BSCANE2-style ports dbg_jt_*.
 // With 0, the default, none of it exists and the ports below are not read.
 //
 // CPU_DIV divides the fabric clock down to one T-state per enable, so the
@@ -44,6 +45,7 @@ module z80_soc #(
     parameter int DBG_BAUD   = 115200,      // its serial line
     parameter int DBG_BP_N   = 4,           // its breakpoints (1 to 8)
     parameter bit DBG_HALT_ON_RESET = 1'b0, // 1: stopped at 0000H after reset
+    parameter bit DBG_JTAG   = 1'b0,        // 1: the unit's bytes over the dbg_jt_* TAP ports, not dbg_rx/dbg_tx
     parameter int ROM_BANKS = 1,            // x 32 KB
     parameter int RAM_BANKS = 2,
     // Backing store size, as an address width.  Defaults to the whole bank
@@ -68,6 +70,17 @@ module z80_soc #(
     // The debug unit's serial line.  Leave both unconnected unless DEBUG_UNIT.
     input  logic       dbg_rx,
     output logic       dbg_tx,
+
+    // The debug unit's JTAG link, the ports of a BSCANE2 (rtl/soc/dbg_jtag_link.sv).
+    // Used only with DEBUG_UNIT and DBG_JTAG; leave them unconnected otherwise.
+    input  logic       dbg_jt_tck,
+    input  logic       dbg_jt_sel,
+    input  logic       dbg_jt_capture,
+    input  logic       dbg_jt_shift,
+    input  logic       dbg_jt_update,
+    input  logic       dbg_jt_tdi,
+    input  logic       dbg_jt_reset,
+    output logic       dbg_jt_tdo,
 
     // AXI4 to the MIG.  Meaningful only when USE_DDR2, tied off otherwise, so
     // a board that does not use them can leave them unconnected.
@@ -419,9 +432,14 @@ module z80_soc #(
       dbg_unit #(
           .CLK_HZ (CLK_HZ), .BAUD (DBG_BAUD), .BP_N (DBG_BP_N),
           .HALT_ON_RESET (DBG_HALT_ON_RESET),
-          .COMMON_BANK (8'h80 | 8'(RAM_BANKS - 1))
+          .COMMON_BANK (8'h80 | 8'(RAM_BANKS - 1)),
+          .JTAG_LINK (DBG_JTAG)
       ) u_dbg (
           .clk (clk), .rst_n (rst_n), .rx (dbg_rx), .tx (dbg_tx),
+          .jt_tck (dbg_jt_tck), .jt_sel (dbg_jt_sel),
+          .jt_capture (dbg_jt_capture), .jt_shift (dbg_jt_shift),
+          .jt_update (dbg_jt_update), .jt_tdi (dbg_jt_tdi),
+          .jt_reset (dbg_jt_reset), .jt_tdo (dbg_jt_tdo),
           .clk_en (clk_en), .core_clk_en (core_clk_en),
           .at_boundary (dbg_at_boundary), .core_pc (dbg_pc),
           .reg_sel (dbg_reg_sel), .reg_hi (dbg_reg_hi),
@@ -436,6 +454,7 @@ module z80_soc #(
     end else begin : g_nodbg
       assign core_clk_en  = clk_en;
       assign dbg_tx       = 1'b1;
+      assign dbg_jt_tdo   = 1'b0;
       assign dbg_reg_sel  = 5'd0;
       assign dbg_reg_hi   = 1'b0;
       assign dbg_wr_en    = 1'b0;
@@ -600,6 +619,8 @@ module z80_soc #(
   // pins this SoC has no use for, tied off so lint does not complain
   logic unused;
   assign unused = &{1'b0, halt_n, rfsh_n, busak_n, phys[18:15], dbg_rx,
+                    dbg_jt_tck, dbg_jt_sel, dbg_jt_capture, dbg_jt_shift,
+                    dbg_jt_update, dbg_jt_tdi, dbg_jt_reset,
                     dbg_req, cur_bank, dbg_rdata, dbg_ack};
 
 endmodule

@@ -3,6 +3,8 @@
 
   python3 tools/z80dbg_bridge.py --serial /dev/cu.usbserial-XXXX --listen 1234
   python3 tools/z80dbg_bridge.py --vvp sim/tb_debug_cosim.vvp --listen 1234
+  python3 tools/z80dbg_bridge.py --jtag --listen 1234          (Nexys A7, over USER3)
+  python3 tools/z80dbg_bridge.py --vvp-jtag sim/tb_debug_cosim_jtag.vvp --listen 1234
 
 The debug unit (rtl/soc/dbg_unit.sv) speaks a small binary protocol on a
 serial line of its own; docs/debug_unit.md has the whole of it.  This program
@@ -150,6 +152,188 @@ class VvpTransport(object):
     def idle(self, seconds):
         self._command("R %d" % int(seconds * self.CLOCK_HZ))
         del self.buf[:]
+
+    def close(self):
+        try:
+            self.proc.stdin.write("Q\n")
+            self.proc.stdin.flush()
+        except (OSError, ValueError):
+            pass
+        self.proc.wait()
+
+
+class JtagLink(object):
+    """The debug unit's byte stream over JTAG: the same write/read/idle as the
+    other transports, on top of scan(words), which does one DR scan of the
+    unit's 10-bit data register per word and returns the captured words.
+
+    A word shifted in is  bit 8 HV (the host sends bit 7:0), bit 9 zero.
+    A word captured is   bit 8 FV (bit 7:0 is a byte from the unit, taken by
+    this scan), bit 9 RJ (the scan's byte was not taken).  The unit's host
+    mailbox holds one byte.  A scan whose capture has RJ = 1 loses its byte
+    and sets a sticky flag, so every byte after it in the batch is lost too,
+    in order; a scan with HV = 0 clears the flag.  write() therefore sends the
+    bytes from the first rejected one again, after one scan with HV = 0.
+
+    Every captured FV byte goes into the receive buffer, whatever else the
+    scan carried: a scan with a host byte in it never loses a unit byte.
+
+    pause() is called when a poll found nothing or a write was rejected; a
+    simulation uses it to let the unit's clock run.  timeout is in seconds of
+    the host, max_idle the number of such pauses in a row, whichever is
+    reached first."""
+
+    HV = 0x100
+    FV = 0x100
+    RJ = 0x200
+
+    def __init__(self, scan, pause=None, batch=32, timeout=1.0, max_idle=None):
+        self.scan = scan
+        self.pause = pause
+        self.batch = batch
+        self.timeout = timeout
+        self.max_idle = max_idle
+        self.rx = bytearray()
+        self.need_clear = True      # a sticky flag from before this link, maybe
+
+    def _scan(self, words):
+        got = self.scan(words)
+        if len(got) != len(words):
+            raise IOError("JTAG scan returned %d words for %d" % (len(got), len(words)))
+        for w in got:
+            if w & self.FV:
+                self.rx.append(w & 0xFF)
+        return got
+
+    def _stalled(self, start, idle):
+        if self.pause:
+            self.pause()
+        if idle > 1 and time.monotonic() - start > self.timeout:
+            return True
+        return self.max_idle is not None and idle > self.max_idle
+
+    def write(self, data):
+        pending = bytearray(data)
+        start = time.monotonic()
+        idle = 0
+        while pending:
+            chunk = pending[:self.batch]
+            words = [self.HV | b for b in chunk]
+            lead = 1 if self.need_clear else 0
+            if lead:
+                words.insert(0, 0)      # HV = 0: clears the sticky flag
+            got = self._scan(words)[lead:]
+            self.need_clear = False
+            taken = len(chunk)
+            for i, w in enumerate(got):
+                if w & self.RJ:
+                    taken = i
+                    break
+            if any(not (w & self.RJ) for w in got[taken:]):
+                raise IOError("JTAG link: a byte was taken after a rejected one")
+            del pending[:taken]
+            if taken < len(chunk):
+                self.need_clear = True
+            if taken:
+                idle = 0
+                start = time.monotonic()
+            elif pending:
+                idle += 1
+                if self._stalled(start, idle):
+                    raise TimeoutError("the debug unit's JTAG mailbox did not empty")
+
+    def _fill(self, n):
+        """Poll with HV = 0 scans until n bytes are in the buffer."""
+        start = time.monotonic()
+        idle = 0
+        while len(self.rx) < n:
+            before = len(self.rx)
+            self._scan([0] * min(max(n - len(self.rx), 1), self.batch))
+            self.need_clear = False     # an HV = 0 scan has run
+            if len(self.rx) > before:
+                idle = 0
+                start = time.monotonic()
+                continue
+            idle += 1
+            if self._stalled(start, idle):
+                raise TimeoutError("the debug unit did not answer")
+
+    def read(self, n):
+        self._fill(n)
+        out = bytes(self.rx[:n])
+        del self.rx[:n]
+        return out
+
+    def idle(self, seconds):
+        """Wait, then drain whatever the unit sent meanwhile, and the buffer."""
+        if self.pause_for:
+            self.pause_for(seconds)
+        else:
+            time.sleep(seconds)
+        quiet = 0
+        while quiet < 2:
+            before = len(self.rx)
+            self._scan([0] * 4)
+            quiet = quiet + 1 if len(self.rx) == before else 0
+        self.need_clear = False
+        del self.rx[:]
+
+    pause_for = None
+
+
+class JtagTransport(JtagLink):
+    """The board through z80dbg_jtag.py: IR = USER3 once, then DR scans."""
+
+    def __init__(self, backend="pyftdi", url=None, freq=6e6):
+        import z80dbg_jtag as zj
+        self.jtag = zj.Jtag(zj.open_backend(backend, url, freq), freq)
+        try:
+            self.jtag.ir_scan(zj.IR_USER3)
+        except BaseException:
+            self.jtag.close()
+            raise
+        JtagLink.__init__(self, lambda words: self.jtag.dr_scan_batch(words, 10))
+
+    def close(self):
+        self.jtag.close()
+
+
+class VvpJtagTransport(JtagLink):
+    """The JTAG simulation (sim/tb_debug_cosim_jtag.sv), by lines:
+         J w0 w1 ...   one DR scan per word (hex); answer  JR r0 r1 ...
+         R n           run n clocks of the unit; answer a RECV line (empty)
+    Simulated time passes in R, so pause() runs the unit's clock."""
+
+    CLOCK_HZ = 1000000
+
+    def __init__(self, vvp_file, vvp="vvp", cwd=None):
+        self.proc = subprocess.Popen([vvp, vvp_file], stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, cwd=cwd,
+                                     universal_newlines=True, bufsize=1)
+        line = self.proc.stdout.readline().strip()
+        if line != "READY":
+            raise RuntimeError("the simulation did not start: %r" % line)
+        JtagLink.__init__(self, self._scan_lines, pause=lambda: self._run(200),
+                          timeout=3600.0, max_idle=500)
+        self.pause_for = lambda seconds: self._run(int(seconds * self.CLOCK_HZ))
+
+    def _line(self, text, want):
+        self.proc.stdin.write(text + "\n")
+        self.proc.stdin.flush()
+        while True:
+            line = self.proc.stdout.readline()
+            if not line:
+                raise RuntimeError("the simulation ended")
+            words = line.split()
+            if words and words[0] == want:
+                return words[1:]
+
+    def _scan_lines(self, words):
+        got = self._line("J " + " ".join("%03x" % w for w in words), "JR")
+        return [int(w, 16) for w in got]
+
+    def _run(self, clocks):
+        self._line("R %d" % clocks, "RECV")
 
     def close(self):
         try:
@@ -735,6 +919,17 @@ def main():
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--serial", help="serial device of the unit's UART")
     src.add_argument("--vvp", help="simulation to drive (sim/tb_debug_cosim.vvp)")
+    src.add_argument("--jtag", action="store_true",
+                     help="the board's debug unit over JTAG (USER3), through an FTDI MPSSE")
+    src.add_argument("--vvp-jtag", metavar="FILE",
+                     help="JTAG simulation to drive (sim/tb_debug_cosim_jtag.vvp)")
+    ap.add_argument("--jtag-backend", choices=("pyftdi", "d2xx"), default="pyftdi",
+                    help="FTDI library for --jtag (default pyftdi; d2xx is the Windows path)")
+    ap.add_argument("--jtag-url", default=None,
+                    help="--jtag: a pyftdi URL (default ftdi://0x0403:0x6010/1, channel A "
+                         "of the Digilent FT2232) or, for d2xx, the device index (default 0)")
+    ap.add_argument("--jtag-freq", type=float, default=6e6,
+                    help="--jtag: TCK in Hz (default 6e6, at most 30e6)")
     ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("--listen", type=int, default=1234, help="TCP port (0: any)")
     ap.add_argument("--listen-addr", default="127.0.0.1",
@@ -762,11 +957,21 @@ def main():
     if a.vvp:
         transport = VvpTransport(a.vvp, cwd=root)
         poll = 0
+    elif a.vvp_jtag:
+        transport = VvpJtagTransport(a.vvp_jtag, cwd=root)
+        poll = 0
+    elif a.jtag:
+        transport = JtagTransport(a.jtag_backend, a.jtag_url, a.jtag_freq)
+        poll = 0.005
     else:
         transport = SerialTransport(a.serial, a.baud)
         poll = 0.005
     unit = Unit(transport)
-    unit.sync()
+    try:
+        unit.sync()
+    except BaseException:
+        transport.close()
+        raise
     bridge = Bridge(unit, poll, program_bank)
 
     ls = socket.socket()

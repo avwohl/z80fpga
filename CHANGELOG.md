@@ -4,6 +4,29 @@
 
 ### Added
 
+- The debug unit talks JTAG. `rtl/soc/dbg_jtag_link.sv` is a second
+  implementation of the byte interface of `dbg_uart.sv`, on the user register
+  USER3 (`BSCANE2`, `JTAG_CHAIN` 3, a 10-bit register: a byte, HV, FV, RJ),
+  with toggle handshakes between TCK and the unit clock. `dbg_unit` has the
+  parameter `JTAG_LINK`, and `z80_soc` has `DBG_JTAG` and the ports
+  `dbg_jt_*`; both default to 0, the serial line. `Z80_DEBUG_UNIT=1` now
+  builds the JTAG link with no Pmod pins; `Z80_DEBUG_LINK=uart` builds the old
+  Pmod JA link. `tools/z80dbg_jtag.py` drives the FTDI chip (pyftdi, and
+  `ftd2xx` for Windows), and `z80dbg_bridge.py` has `--jtag`,
+  `--jtag-backend`, `--jtag-url`, `--jtag-freq` and `--vvp-jtag`. The register
+  and the rules are in `docs/debug_unit.md`. Measured: `sim/tb_jtag_link.sv`
+  87080 checks with TCK faster and slower than the unit clock (six deliberate
+  faults each failed the bench); `tools/test_z80dbg_jtag.py` 195 checks, no
+  RTL; `tools/test_z80dbg_bridge.py` now runs its 253 checks over the UART
+  cosim and over the JTAG cosim (506); on the JTAG cosim GDB 18.1 stopped at
+  `start ()` with `Program received signal SIGTRAP`, and udb80 0.4.2
+  `--wait-program` stopped at 0100H with `break wp.mac:3`, `continue` and
+  `bt`. On the real Nexys A7 (macOS, pyftdi) the IDCODE read 0x13631093 at 6
+  and 30 MHz. Not measured: no Vivado has built the link or run
+  `romwbw_dbg_jtag.xdc`, so the unit has not answered over JTAG on the board;
+  the `d2xx` back end has touched no device. `docs/macos.md` and
+  `MANUAL_CHECKS.md` say the debug unit needs no adapter.
+
 - `docs/macos.md`: what to install on a Mac (Homebrew `icarus-verilog`,
   `verilator`, `openfpgaloader`; `pyserial`; um80 and a GDB with the Z80
   target), and how to run the simulation, lint, the board's JTAG and console,
@@ -13,8 +36,7 @@
   `/dev/cu.usbserial-...1` gave the RomWBW boot prompt and the help text.
   `make test` (with the opcode suite), `make test-debug` and `make lint`
   pass. Not on a Mac: Vivado, so no bitstream was built or loaded, and the
-  debug unit did not run on the board (it also needs a USB-serial adapter on
-  Pmod JA). `docs/boards.md` gives the macOS device name.
+  debug unit did not run on the board. `docs/boards.md` gives the macOS device name.
 - The GDB bridge (`tools/z80dbg_bridge.py`) follows the 2026-11-05 changes to
   cpmemu's stub (cpmemu 4.12.0). `monitor wait-program bytes HEX...` and
   `sha256 LENGTH HEX64` stop the target when a program with those bytes

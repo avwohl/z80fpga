@@ -15,7 +15,7 @@ a Nexys A7-100T on USB. A step that was not run says so.
 | Load a bitstream into the board (JTAG) | yes, with openFPGALoader |
 | The serial console of the board | yes |
 | Build a bitstream for the Nexys A7 | no: Vivado runs on Windows and Linux only |
-| The debug unit on the board | needs a bitstream from Vivado and a USB-serial adapter |
+| The debug unit on the board | needs a bitstream from Vivado; no adapter (`--jtag`, `pyftdi`) |
 
 ## Install
 
@@ -23,13 +23,15 @@ With [Homebrew](https://brew.sh):
 
 ```
 brew install icarus-verilog verilator openfpgaloader
-python3 -m pip install --user --break-system-packages pyserial
+python3 -m pip install --user --break-system-packages pyserial pyftdi
 ```
 
 - `icarus-verilog` gives `iverilog` and `vvp` (13.0 was measured).
 - `verilator` is for `make lint` (5.054 was measured).
 - `openfpgaloader` loads a bitstream through the USB port of the board (1.2.0
   was measured). It takes the place of the Vivado hardware manager.
+- `pyftdi` is for the GDB bridge with `--jtag`: the bridge talks JTAG to the
+  board through the USB cable. It needs no adapter.
 - `pyserial` is for the GDB bridge with `--serial`. Use a virtual environment
   if you do not want a `--user` install.
 
@@ -122,22 +124,25 @@ Python program on the device, not `screen`.
 
 ## The debug unit on the board
 
-Two things are necessary, and neither one was on the Mac on 2026-11-05:
+A bitstream with the debug unit is necessary, and it was not on the Mac on
+2026-11-05. Build the bitstream with Vivado and `Z80_DEBUG_UNIT=1` on Windows
+or Linux (`MANUAL_CHECKS.md`, "Debug unit on the Nexys A7-100T").
 
-1. A bitstream with the debug unit. Build it with Vivado and
-   `Z80_DEBUG_UNIT=1` on Windows or Linux (`MANUAL_CHECKS.md`, "Debug unit on
-   the Nexys A7-100T").
-2. A 3.3 V USB-serial adapter on Pmod JA. Adapter TX to JA pin 1, adapter RX
-   to JA pin 2, GND to JA pin 5. macOS gives the adapter its own device: an
-   FTDI adapter is `/dev/cu.usbserial-*`, a CP210x is `/dev/cu.SLAB_USBtoUART`
-   or `/dev/cu.usbserial-*`, a CH340 is `/dev/cu.wchusbserial*`. Run
-   `ls /dev/cu.*` before and after you plug it in.
-
-Then:
+The unit needs no adapter. The unit speaks JTAG (USER3) over the same USB cable
+that loads the bitstream. The cable keeps channel A for JTAG and channel B for
+the console, so the console works at the same time. Run:
 
 ```
-python3 tools/z80dbg_bridge.py --serial /dev/cu.ADAPTER --listen 1234
+python3 -m pip install --user --break-system-packages pyftdi
+python3 tools/z80dbg_jtag.py --check
+python3 tools/z80dbg_bridge.py --jtag --listen 1234
 ```
+
+`--check` reads the IDCODE. Measured on 2026-11-05: 0x13631093 at 6 MHz and at
+30 MHz, with pyftdi, with no extra step for libusb. One program at a time holds
+channel A, so close `openFPGALoader` and the hardware manager of Vivado before
+you start the bridge. For the serial link on Pmod JA (other builds), use
+`--serial /dev/cu.ADAPTER` with `Z80_DEBUG_LINK=uart`.
 
 Connect GDB or udb80 as [debug_unit.md](debug_unit.md) says (The GDB bridge).
 The same steps work on the cosim with no board: replace `--serial DEVICE`

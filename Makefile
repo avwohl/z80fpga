@@ -8,7 +8,8 @@
 #   make boot       assemble sw/boot.z80
 #   make lint       Verilator lint over the core and the SoC
 #   make synth      iCE40 resource report for the core alone
-#   make test-debug the debug unit: three RTL benches and the GDB bridge
+#   make test-debug the debug unit: three RTL benches, the JTAG link bench,
+#                   the JTAG cosim and the GDB bridge
 
 # The recipes are POSIX shell, and on Windows mingw32-make would otherwise
 # hand them to cmd.exe - where Verilator's wrapper cannot find its own root.
@@ -41,7 +42,7 @@ sim: sim/tb_sst.vvp sim/tb_soc.vvp sim/tb_irq.vvp sim/tb_ddr2ram.vvp \
      sim/tb_sdram.vvp sim/tb_sdram_soc.vvp sim/tb_romload.vvp \
      sim/tb_hdsk.vvp sim/tb_hdsk_soc.vvp \
      sim/tb_debug.vvp sim/tb_debug_div3.vvp sim/tb_debug_ddr2.vvp \
-     sim/tb_debug_cosim.vvp
+     sim/tb_debug_cosim.vvp sim/tb_debug_cosim_jtag.vvp sim/tb_jtag_link.vvp
 
 sim/tb_sst.vvp: sim/tb_sst.sv $(CORE) $(GEN)
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_sst.sv $(CORE)
@@ -161,7 +162,7 @@ sim/tb_hdsk_soc.vvp: sim/tb_hdsk_soc.sv $(SOC) rtl/mem/ddr2_ram.sv rtl/soc/sd_sp
 # and the benches set that, so the files are listed here and in no board.  The
 # three tb_debug variants are one source: Icarus 13 does not take -P for a
 # parameter of the top module, so -D macros pick CPU_DIV, DDR2 and halt-on-reset.
-DBG := rtl/soc/dbg_uart.sv rtl/soc/dbg_unit.sv
+DBG := rtl/soc/dbg_uart.sv rtl/soc/dbg_jtag_link.sv rtl/soc/dbg_unit.sv
 
 sim/dbg_prog.hex: sim/dbg_prog.z80 tools/zasm.py
 	$(PYTHON) tools/zasm.py sim/dbg_prog.z80 -o $@ --size 32809
@@ -183,10 +184,24 @@ sim/tb_debug_ddr2.vvp: sim/tb_debug.sv sim/dbg_host.svh $(SOC) $(DBG) rtl/mem/dd
 sim/tb_debug_cosim.vvp: sim/tb_debug_cosim.sv $(SOC) $(DBG) $(GEN) sw/boot.hex
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_debug_cosim.sv $(SOC) $(DBG)
 
-test-debug: sim/tb_debug.vvp sim/tb_debug_div3.vvp sim/tb_debug_ddr2.vvp sim/tb_debug_cosim.vvp
+# The same, with the unit's bytes over the JTAG link (DBG_JTAG); the serial pair
+# does not exist in this build.  tools/ drives it with J lines.
+sim/tb_debug_cosim_jtag.vvp: sim/tb_debug_cosim.sv $(SOC) $(DBG) $(GEN) sw/boot.hex
+	$(IVERILOG) -g2012 -I rtl/core -DDBG_JTAG -o $@ sim/tb_debug_cosim.sv $(SOC) $(DBG)
+
+# The JTAG link alone, with TCK faster and slower than the unit's clock
+sim/tb_jtag_link.vvp: sim/tb_jtag_link.sv rtl/soc/dbg_jtag_link.sv
+	$(IVERILOG) -g2012 -o $@ sim/tb_jtag_link.sv rtl/soc/dbg_jtag_link.sv
+
+test-debug: sim/tb_debug.vvp sim/tb_debug_div3.vvp sim/tb_debug_ddr2.vvp sim/tb_debug_cosim.vvp sim/tb_debug_cosim_jtag.vvp sim/tb_jtag_link.vvp
 	$(VVP) sim/tb_debug.vvp
 	$(VVP) sim/tb_debug_div3.vvp
 	$(VVP) sim/tb_debug_ddr2.vvp
+	$(VVP) sim/tb_jtag_link.vvp
+	@printf 'J 153 000 000 000 000\nQ\n' | $(VVP) sim/tb_debug_cosim_jtag.vvp | grep -q '^JR 000 153 1' \
+	  && echo "PASS: JTAG cosim answers the S command ('S' comes back in the second scan)" \
+	  || { echo "FAIL: JTAG cosim did not answer the S command"; exit 1; }
+	$(PYTHON) tools/test_z80dbg_jtag.py
 	$(PYTHON) tools/test_z80dbg_bridge.py
 
 romwbw: sim/tb_romwbw.vvp sim/romwbw512k.hex
@@ -220,6 +235,16 @@ test-full: sim
 # from the single always_ff in z80_core.sv.
 lint: $(GEN)
 	verilator --lint-only -Wall +incdir+rtl/core --top-module z80_soc 	    -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-MULTIDRIVEN 	    $(SOC)
+	for j in 0 1; do verilator --lint-only -Wall +incdir+rtl/core --top-module z80_soc \
+	    -GDEBUG_UNIT=1 -GDBG_JTAG=$$j \
+	    -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-MULTIDRIVEN \
+	    $(SOC) $(DBG) || exit 1; done
+	verilator --lint-only -Wall --top-module dbg_jtag_link \
+	    -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-MULTIDRIVEN \
+	    rtl/soc/dbg_jtag_link.sv
+	verilator --lint-only -Wall --top-module dbg_bscan_xilinx \
+	    -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-MULTIDRIVEN \
+	    sim/bscane2_stub.v rtl/soc/dbg_bscan_xilinx.sv
 
 synth: $(GEN)
 	$(YOSYS) -p "read_verilog -sv -I rtl/core $(CORE); \

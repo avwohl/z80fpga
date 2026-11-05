@@ -2,7 +2,8 @@
 
 The debug unit lets a host program stop the Z80, step the Z80, set breakpoints,
 and read and write registers and memory. The host talks to the unit over a
-serial line of its own. The console stays with the guest. The design is
+byte link of its own: JTAG (the Nexys A7 build, no adapter) or a serial line
+(other boards). The console stays with the guest. The design is
 phase 10 of `docs/debugger_plan.md` in the cpmemu repository.
 
 The debug unit is off by default. A build that sets the parameter `DEBUG_UNIT`
@@ -17,6 +18,13 @@ step 2 of `MANUAL_CHECKS.md`.
 - `rtl/soc/dbg_unit.sv` holds the command decoder, the breakpoints and the
   stop control.
 - `rtl/soc/dbg_uart.sv` is a small 8N1 serial port for the unit.
+- `rtl/soc/dbg_jtag_link.sv` is the JTAG link: the same byte interface as
+  `dbg_uart.sv`, on the user register USER3 of the FPGA. The parameter
+  `JTAG_LINK` of `dbg_unit` selects the link.
+- `rtl/soc/dbg_bscan_xilinx.sv` is the Xilinx part: a `BSCANE2` with
+  `JTAG_CHAIN` 3, and a `BUFG` on TCK. Only a synthesis flow uses the file.
+  `sim/bscane2_stub.v` replaces the two primitives for lint.
+- `tools/z80dbg_jtag.py` drives an FTDI chip in MPSSE mode as a JTAG master.
 - `rtl/core/z80_core.sv` has the register hooks. The hooks exist only when
   its parameter `DEBUG_UNIT` is 1.
 - `rtl/soc/z80_mmu.sv` has a bank override for the low 32 KB window.
@@ -32,9 +40,13 @@ step 2 of `MANUAL_CHECKS.md`.
 - `DBG_BP_N`: the number of hardware breakpoints, 1 to 8. The default is 4.
 - `DBG_HALT_ON_RESET`: 1 holds the core stopped at 0000H after reset.
   The default is 0.
+- `DBG_JTAG`: 1 selects the JTAG link. The default is 0, the serial line.
 
-The ports `dbg_rx` and `dbg_tx` carry the serial line. A build with no unit
-leaves both ports unconnected.
+The ports `dbg_rx` and `dbg_tx` carry the serial line. The ports
+`dbg_jt_tck`, `dbg_jt_sel`, `dbg_jt_capture`, `dbg_jt_shift`,
+`dbg_jt_update`, `dbg_jt_tdi`, `dbg_jt_reset` and `dbg_jt_tdo` carry the TAP
+signals of the JTAG link. A build with no unit, and a build with the other
+link, leaves the unused ports unconnected.
 
 ## How the unit stops the core
 
@@ -79,6 +91,9 @@ The loader owns the memory port until `rom_done` rises.
 
 ## Serial protocol
 
+The protocol below is the same on both links. Only the carrier of the bytes
+differs (see "JTAG link").
+
 The host sends a command byte and its arguments. The unit answers with the
 command byte, or with `E` and an error code. Multi-byte values are little
 endian. The unit drops a command that stops half way after 10 ms without a byte.
@@ -119,6 +134,151 @@ the bank that the CPU selected.
 
 The core has no write port for the alternate set (registers 4 to 7). Register 15
 belongs to the MMU. A write to register 4, 5, 6, 7 or 15 returns `E 04`.
+
+## JTAG link
+
+The link is a second implementation of the byte interface of `dbg_uart.sv`.
+The command protocol does not change. A board that has no JTAG access to the
+FPGA, or a build with `DBG_JTAG` at 0, uses the serial line.
+
+### The register
+
+The link uses the Xilinx primitive `BSCANE2` with `JTAG_CHAIN` 3. The
+instruction USER3 (6'b100010, 0x22, IR length 6 on 7-series) selects the data
+register. USER3 keeps clear of USER1, which the Vivado debug hub uses. The data
+register has 10 bits. The host shifts the least significant bit first, on TDI
+and on TDO.
+
+Host to FPGA, shifted in:
+
+- Bits 7 to 0: a byte.
+- Bit 8, HV: 1 means the host sends the byte.
+- Bit 9: 0. The bit is reserved, and the unit ignores the bit.
+
+FPGA to host, captured at CAPTURE-DR and shifted out in the same scan:
+
+- Bits 7 to 0: a byte. Without a waiting byte the value is not defined.
+- Bit 8, FV: 1 means the byte is new. The scan takes the byte at UPDATE-DR.
+- Bit 9, RJ: 1 means the FPGA rejects the host byte of this scan.
+
+### The rules
+
+- A scan always has CAPTURE-DR, 10 SHIFT-DR cycles and UPDATE-DR.
+- RJ at CAPTURE-DR is 1 when the one-byte host mailbox is full (the clock of
+  the unit has not taken the previous byte), or when the sticky reject flag is
+  set.
+- At UPDATE-DR, if HV is 1 and RJ of the same scan was 0, the byte goes into
+  the mailbox. The unit sees `rx_valid` for one clock. If HV is 1 and
+  RJ was 1, the link drops the byte and sets the sticky flag.
+- A scan with HV at 0 clears the sticky flag at UPDATE-DR.
+- So, in a batch of scans, every byte from the first rejected one onward is
+  rejected, in order. The host sends one scan with HV at 0, and then sends
+  again from the first rejected byte. `JtagLink` in `z80dbg_bridge.py` does
+  this.
+- TCK and the clock of the unit are asynchronous. Each direction has a toggle
+  handshake with two flip-flops at the receiving side, and a one-byte mailbox.
+  TCK can be faster or slower than the clock of the unit.
+- A TAP reset (`RESET` of `BSCANE2`) clears the TCK-domain flags.
+- `tx_busy` is high while the mailbox to the host holds a byte that the host
+  has not taken. The unit still drops a half-sent command after 10 ms. The host
+  sends a whole command in one batch, so the bytes arrive microseconds apart.
+- Leave the TAP in Run-Test/Idle between scans. TCK can be slower than the
+  unit clock. Then a scan that follows UPDATE-DR with no Run-Test/Idle can
+  see RJ at 1, because the acknowledgement has not crossed yet. The host retries, so no
+  byte is lost. The cosim and the `JtagLink` batches give the idle cycle.
+
+### Build options
+
+- `Z80_DEBUG_UNIT=1` in the environment of `build_romwbw.tcl` builds the unit
+  with the JTAG link. The build has no Pmod pins and reads
+  `romwbw_dbg_jtag.xdc`. The Tcl script defines the macro `WITH_DEBUG_UNIT`.
+- `Z80_DEBUG_LINK=uart` (with `Z80_DEBUG_UNIT=1`) builds the old serial link on
+  Pmod JA with `romwbw_dbg.xdc`, and defines `WITH_DEBUG_UART`. Any other
+  value of `Z80_DEBUG_LINK` stops the script with an error.
+- `romwbw_dbg_jtag.xdc` has a `create_clock` of 33.333 ns on TCK and an
+  asynchronous clock group against `ui_clk`. No Vivado has run the file. The
+  names in the file are not checked.
+
+### Bridge options
+
+```
+python3 tools/z80dbg_bridge.py --jtag --listen 1234
+python3 tools/z80dbg_bridge.py --vvp-jtag sim/tb_debug_cosim_jtag.vvp --listen 1234
+```
+
+- `--jtag`: the board, through an FTDI chip.
+- `--jtag-backend pyftdi|d2xx`: the FTDI library. The default is `pyftdi`.
+- `--jtag-url`: a pyftdi URL (default `ftdi://0x0403:0x6010/1`, channel A of
+  the Digilent FT2232) or, for `d2xx`, a device index (default 0).
+- `--jtag-freq`: TCK in Hz. The default is 6e6. The maximum is 30e6. The driver rounds the clock down, so TCK never exceeds this value.
+- `--vvp-jtag FILE`: the JTAG cosim.
+
+`python3 tools/z80dbg_jtag.py --check` reads the IDCODE and scans USER3 once,
+with no bridge. The expected IDCODE of the XC7A100T is 0x13631093
+(openFPGALoader prints 0x3631093, with no version nibble).
+
+### One cable
+
+The Nexys A7 has one USB cable. The FT2232 chip gives two channels: channel A
+is JTAG, and channel B is the console UART. The debug unit uses channel A, so
+the console and the debugger work at the same time on the same cable.
+
+- macOS: `python3 -m pip install --user --break-system-packages pyftdi`, and
+  then `--jtag`. See `docs/macos.md`.
+- Linux: `pip install pyftdi`, and then `--jtag`. The user needs access to the
+  USB device (a udev rule). Not tried.
+- Windows: `--jtag --jtag-backend d2xx` (`pip install ftd2xx`). The D2XX driver
+  is the driver that Vivado uses. Not tried.
+- One program at a time holds channel A. Close the hardware manager of Vivado
+  (or `openFPGALoader`) before the bridge starts. If you load a new bitstream,
+  start the bridge after the load.
+
+### The cosim
+
+`sim/tb_debug_cosim_jtag.vvp` (the Makefile builds the file with
+`-DDBG_JTAG`) has the same SoC as `tb_debug_cosim.vvp`, with the JTAG link.
+Its lines on standard input:
+
+- `J w0 w1 ...`: one DR scan per hex word, back to back, each with one
+  Run-Test/Idle after the scan. The answer is `JR r0 r1 ...`, 3 hex digits
+  each, `{RJ, FV, byte}`.
+- `X`: a TAP reset. The answer is `XR`.
+- `R n`: runs n clocks of the unit, and answers `RECV`.
+- `S`: answers `ERR S needs the serial build`.
+
+The unit clock is 1 MHz. TCK is 73 kHz, which keeps the ratio of the board
+(81.25 MHz to 6 MHz). Simulated time passes during a scan.
+
+### What is measured
+
+- `sim/tb_jtag_link.sv`: 87080 checks of the link alone, in four fixtures:
+  TCK 6 times faster than the unit clock, 37 times faster, 6 MHz against
+  81.25 MHz, and 43.5 MHz against 58.8 MHz. Six deliberate faults in the link
+  each made the bench fail. A directed test checks that a byte in the host
+  mailbox is dropped when `rst_n` is low.
+- `tools/test_z80dbg_jtag.py`: 195 checks of the Python side with a model of
+  the FPGA, and fake FTDI objects. No RTL, no board.
+- `tools/test_z80dbg_bridge.py`: the same 253 checks over each link, 506 in
+  all.
+- GDB 18.1 over `--vvp-jtag`: `monitor wait-program sha256 128 HEX64` and
+  `continue` gave `Program received signal SIGTRAP` at `start ()`. udb80 0.4.2
+  `--wait-program` stopped at 0100H, and `break wp.mac:3`, `continue` and `bt`
+  worked.
+- On the real Nexys A7 (2026-11-05, macOS 27, pyftdi): IDCODE 0x13631093 at
+  6 MHz and at 30 MHz. A bitstream with no unit answers a USER3 scan like a
+  1-bit BYPASS register.
+
+### What is not measured
+
+- The clock-crossing flops carry `ASYNC_REG`, but the xdc has no `set_max_delay -datapath_only` for the data buses, and the hold paths from the BSCANE2 outputs to the buffered TCK are not checked. After the first Vivado build, read `report_cdc` and these paths, and test at 30 MHz.
+- No Vivado has built the JTAG link. The `BSCANE2` wrapper, the clock
+  constraints and the timing are not checked. The link in a real FPGA has not
+  answered a command.
+- The `d2xx` back end has not touched a device. Linux and Windows are not
+  tried.
+- TCK above 6 MHz has run only for the IDCODE read.
+- The LUT cost of the JTAG link is not measured. The "Cost" section is for the
+  serial link.
 
 ## The GDB bridge
 
@@ -216,7 +376,8 @@ A changed alternate register returns `E01`.
 
 ## Tests
 
-`make test-debug` builds and runs four tests. `make test` includes the four tests.
+`make test-debug` builds and runs the tests below, a JTAG cosim check and the
+Python test of the JTAG driver. `make test` includes them.
 The Makefile uses `python3` if `python3` runs, and `python` if not. On the
 host "Mac" (Icarus Verilog 13.0), the results were:
 
@@ -224,7 +385,9 @@ host "Mac" (Icarus Verilog 13.0), the results were:
 tb_debug.vvp         305 checks, CPU_DIV 1, RAM in block RAM, stopped at reset
 tb_debug_div3.vvp    308 checks, CPU_DIV 3, boot monitor halted in flight
 tb_debug_ddr2.vvp    317 checks, CPU_DIV 3, RAM in DDR2, stack in DDR2
-test_z80dbg_bridge   253 checks, RSP client, bridge, and the RTL
+test_z80dbg_bridge   506 checks, RSP client, bridge, and the RTL, 253 per link
+tb_jtag_link.vvp     87080 checks, the JTAG link alone
+test_z80dbg_jtag     195 checks, JTAG driver and transport, no RTL
 ```
 
 `sim/tb_debug.sv` plays the host. The bench runs the program in
@@ -259,9 +422,10 @@ The session also checks these items:
   on the LAN address and prints the warning. The address of one interface
   refuses 127.0.0.1.
 
-The count is 253 on a host with a LAN address (an IPv4 address that is not
+The session runs twice, over the UART cosim and over the JTAG cosim. The count
+of each run is 253 on a host with a LAN address (an IPv4 address that is not
 127.x). On a host without one, the test prints a `NOTE` line, does not run the
-six LAN checks, and counts 247.
+six LAN checks, and counts 247 for each run.
 
 ### Test on a RomWBW ROM
 
@@ -315,10 +479,14 @@ to 3012 LUTs after the unit.
 ## Nexys A7 build
 
 The option is off by default. To build it, set `Z80_DEBUG_UNIT=1` in the
-environment of `build_romwbw.tcl`. The script then adds the two RTL files, the
-macro `WITH_DEBUG_UNIT` and `romwbw_dbg.xdc`. The serial line uses Pmod JA pin 1
-(`dbg_rx`) and Pmod JA pin 2 (`dbg_tx`). Use a 3.3 V serial adapter. Connect
-the GND of the adapter to JA pin 5.
+environment of `build_romwbw.tcl`. The script then adds the RTL files, the
+macro `WITH_DEBUG_UNIT` and `romwbw_dbg_jtag.xdc`. The unit uses the JTAG
+link. The build needs no adapter and no Pmod pin (see "JTAG link").
+
+For the serial link, also set `Z80_DEBUG_LINK=uart`. The script then adds
+`romwbw_dbg.xdc` and the macro `WITH_DEBUG_UART`. The serial line uses Pmod JA
+pin 1 (`dbg_rx`) and Pmod JA pin 2 (`dbg_tx`). Use a 3.3 V serial adapter.
+Connect the GND of the adapter to JA pin 5.
 
 Rebuild the board after any change to `rtl/`, and read the DRC messages. The
 Nexys RomWBW build is at 94.81 percent of the block RAM, and `CLAUDE.md` has

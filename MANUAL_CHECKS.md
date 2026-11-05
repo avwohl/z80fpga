@@ -8,13 +8,15 @@ the item. If the run found a fault, the fix goes in `CHANGELOG.md`.
 
 The simulation of the debug unit passes (`make test-debug`). Nobody has built
 the unit for the board or run the unit on the board. This check needs Vivado
-(about 25 minutes per build), the board and a 3.3 V USB-serial adapter.
+(about 25 minutes per build) and the board. It needs no adapter: the unit
+speaks JTAG over the USB cable of the board.
 
 1. Build the default board once, with no environment variable:
    `cd boards/nexys_a7_100t/romwbw && vivado -mode batch -source build_romwbw.tcl`.
    The first build gives the reference numbers for the same Vivado version.
 2. Build the board with the unit:
-   `Z80_DEBUG_UNIT=1 vivado -mode batch -source build_romwbw.tcl`.
+   `Z80_DEBUG_UNIT=1 vivado -mode batch -source build_romwbw.tcl`
+   (the JTAG link). `Z80_DEBUG_LINK=uart` builds the old Pmod JA link.
    Use a separate clone or move `build/` away first.
 3. Search the log of the second build for `ERROR: [DRC` and `REQP-1962`.
    Right: no `DRC` error and no `REQP-1962`. The block RAM stays at 128 of 135
@@ -30,16 +32,25 @@ the unit for the board or run the unit on the board. This check needs Vivado
    `stopped`, and `stopped` and `skip` into `core_clk_en`, which feeds the
    clock enable of the core. Wrong: a path with negative slack. Then register the stop
    signal in `dbg_unit.sv`, and run `make test-debug` again.
-5. Check the Pmod pins C17 and D18 against the Nexys A7 reference manual.
-   The author of `romwbw_dbg.xdc` had no board. Wrong pins need a fix in
-   that file only.
+5. Search the log for `No valid object(s) found` and read the timing report
+   for the clock `jtag_tck`. `romwbw_dbg_jtag.xdc` is not tried: no Vivado has
+   run the file. Wrong names need a fix in that file only. (Only for a
+   `Z80_DEBUG_LINK=uart` build: check the Pmod pins C17 and D18 against the
+   Nexys A7 reference manual.)
 6. Program the second bitstream. Right: the console shows the RomWBW banner and
    `Boot [H=Help]:` as before.
-7. Connect the adapter: adapter TX to JA pin 1, adapter RX to JA pin 2, GND to
-   JA pin 5. Run
-   `python3 tools/z80dbg_bridge.py --serial DEVICE --listen 1234`.
-   Right: the bridge prints `listening on 127.0.0.1:1234` and does not stop.
-   Wrong: a timeout from the unit. Check the wires and the baud rate (115200).
+7. Close the hardware manager of Vivado (one program at a time holds channel
+   A of the cable). Run `python3 tools/z80dbg_jtag.py --check`. Right: the
+   IDCODE is 0x13631093 (or 0x3631093) and the USER3 scan does not come back
+   as a 1-bit BYPASS (each word shifted left by one). Then run
+   `python3 tools/z80dbg_bridge.py --jtag --listen 1234` (macOS and Linux:
+   `pip install pyftdi`). Right: the bridge prints `listening on
+   127.0.0.1:1234` and does not stop. Wrong: a timeout from the unit. Check
+   that the bitstream has the unit, and try `--jtag-freq 1e6`. On Windows, run
+   the same with `--jtag --jtag-backend d2xx` (`pip install ftd2xx`). The
+   `d2xx` back end is not tried on any device. For the serial link
+   (`Z80_DEBUG_LINK=uart`): adapter TX to JA pin 1, adapter RX to JA pin 2,
+   GND to JA pin 5, and `--serial DEVICE`.
 8. Run GDB (build with `--target=z80-unknown-elf`, see `docs/debug_unit.md`):
    `set architecture z80`, `target remote :1234`, then `monitor status`.
    Right: the bridge answers `running` or `stopped` and a PC.
@@ -73,8 +84,8 @@ the unit for the board or run the unit on the board. This check needs Vivado
 `32'h8000_0000`. This works on macOS. Nobody has run `make test-debug` with
 the OSS CAD Suite `vvp` on Windows.
 
-14. On the Windows machine, run `mingw32-make test-debug`. Right: four PASS
-    lines, the last one `PASS: 253 checks, bridge against the RTL` (247, with
+14. On the Windows machine, run `mingw32-make test-debug`. Right: seven PASS
+    lines, the last one `PASS: 506 checks, bridge against the RTL` (494, with
     a `NOTE` line, on a machine with no LAN address). Wrong: the
     bridge test hangs or prints no `READY`. Then change how
     `tb_debug_cosim.sv` reads its input.

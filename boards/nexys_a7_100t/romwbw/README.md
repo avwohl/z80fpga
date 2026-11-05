@@ -237,3 +237,9 @@ the start of the card**.
 `../flash.tcl` writes a bitstream into the board's QSPI flash so it comes up
 running with no computer attached. Set the MODE jumper **JP1 to QSPI** first,
 or the FPGA will ignore the flash at power-up and come up blank.
+
+## Debug unit
+
+`Z80_DEBUG_UNIT=1` adds the debug unit, which talks JTAG (USER3) over the USB
+cable: no adapter and no Pmod pin. `Z80_DEBUG_LINK=uart` gives the old Pmod JA
+serial link. See `docs/debug_unit.md`.
