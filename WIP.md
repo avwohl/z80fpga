@@ -1,3 +1,37 @@
+# Next on Windows, 2026-11-05: the debug unit over JTAG on the Nexys A7
+
+Written on the Mac for the Windows session. Delete this section when the
+board check passes.
+
+The debug unit has a JTAG link now (bf783ef, `docs/debug_unit.md`, JTAG
+link). Everything that runs without Vivado passes on the Mac: `make test`,
+`make test-debug` (the bridge test is 506 checks over the UART and the JTAG
+cosim), `make lint`, and a read-only IDCODE over JTAG on the board. Nothing
+has run on the board with the link, because only Vivado builds the bitstream.
+
+On the Windows machine:
+
+1. `git pull`, then build with the link:
+   `cd boards/nexys_a7_100t/romwbw`, `set Z80_DEBUG_UNIT=1`,
+   `vivado -mode batch -source build_romwbw.tcl`. The default link is JTAG
+   (`Z80_DEBUG_LINK=jtag`).
+2. Read the log: no DRC error, no `REQP-1962`, timing met. Read
+   `report_cdc`, and the hold paths of `jtag_tck` from the BSCANE2 outputs
+   (`docs/debug_unit.md`, What is not measured). `romwbw_dbg_jtag.xdc` has
+   never been read by Vivado, so its net and pin names can be wrong.
+3. Program the bitstream (Vivado's hardware manager), then close the hardware
+   manager: one program at a time holds JTAG channel A.
+4. `pip install ftd2xx`, then `python tools/z80dbg_jtag.py --check --backend d2xx`.
+   Right: IDCODE 0x13631093, and a USER3 scan that is not a 1-bit bypass.
+   The d2xx back end has never touched a device.
+5. `python tools/z80dbg_bridge.py --jtag --jtag-backend d2xx --listen 1234`,
+   then GDB or udb80 as `MANUAL_CHECKS.md` says (Debug unit on the Nexys
+   A7-100T, items 6 to 12; no adapter now). GDB needs the Z80 target, and
+   udb80 needs um80 0.4.2 or later.
+6. Copy `build/romwbw_soc.bit` to the Mac too: there `openFPGALoader -b
+   nexys_a7_100 romwbw_soc.bit` loads it, and `--jtag` uses the pyftdi back end
+   (`docs/macos.md`).
+
 # Work in progress, 2026-09-23
 
 Written to survive a reboot. Delete it when the open item below is closed.
