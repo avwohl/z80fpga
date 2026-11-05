@@ -7,6 +7,10 @@
 //   0x78, 0x7C r/w    bank select (see rtl/soc/z80_mmu.sv)
 //   0xFF       r/w    write: LEDs, read: switches
 //
+// DEBUG_UNIT = 1 adds rtl/soc/dbg_unit.sv: halt, step, breakpoints, register
+// and memory access over the serial pair dbg_rx/dbg_tx (docs/debug_unit.md).
+// With 0, the default, none of it exists and the ports below are not read.
+//
 // CPU_DIV divides the fabric clock down to one T-state per enable, so the
 // Z80 runs at CLK_HZ / CPU_DIV.  The UART's baud divisor is taken from the
 // undivided clock.
@@ -36,6 +40,10 @@ module z80_soc #(
     parameter bit SDRAM_ROM  = 1'b0,
     parameter logic [31:0] ROM_LBA = 32'h0040_0000,   // its first block
     parameter int ROM_BLOCKS = 1024,                  // 512 KB of it
+    parameter bit DEBUG_UNIT = 1'b0,        // the debug unit; see docs/debug_unit.md
+    parameter int DBG_BAUD   = 115200,      // its serial line
+    parameter int DBG_BP_N   = 4,           // its breakpoints (1 to 8)
+    parameter bit DBG_HALT_ON_RESET = 1'b0, // 1: stopped at 0000H after reset
     parameter int ROM_BANKS = 1,            // x 32 KB
     parameter int RAM_BANKS = 2,
     // Backing store size, as an address width.  Defaults to the whole bank
@@ -56,6 +64,10 @@ module z80_soc #(
     output logic       uart_rts_n,        // board pin uart_cts
     output logic [7:0] led,
     input  logic [7:0] sw,
+
+    // The debug unit's serial line.  Leave both unconnected unless DEBUG_UNIT.
+    input  logic       dbg_rx,
+    output logic       dbg_tx,
 
     // AXI4 to the MIG.  Meaningful only when USE_DDR2, tied off otherwise, so
     // a board that does not use them can leave them unconnected.
@@ -134,6 +146,7 @@ module z80_soc #(
 
   logic [DIVW-1:0] divcnt;
   logic            clk_en;
+  logic            core_clk_en;     // clk_en, held low while the debug unit has the core stopped
 
   always_ff @(posedge clk) begin
     if (!rst_n) divcnt <= '0;
@@ -195,15 +208,35 @@ module z80_soc #(
   logic core_rst_n;
   assign core_rst_n = rst_n && rom_done;
 
+  // The debug unit's side of the core, the MMU and the memory port.  Declared
+  // here, with constants for the no-unit case further down, because the MMU
+  // and the memory mux use them before the unit is instantiated.
+  logic        dbg_at_boundary, dbg_wr_en;
+  logic [15:0] dbg_pc;
+  logic  [7:0] dbg_reg_rdata, dbg_wr_data;
+  logic  [4:0] dbg_reg_sel, dbg_wr_sel;
+  logic        dbg_reg_hi, dbg_wr_hi;
+  logic        dbg_ovr_en;
+  logic  [7:0] dbg_ovr_bank, cur_bank;
+  logic        dbg_req, dbg_we, dbg_ack;
+  logic [15:0] dbg_addr;
+  logic  [7:0] dbg_wdata, dbg_rdata;
+
   z80_core #(
+      .DEBUG_UNIT (DEBUG_UNIT),
       .UCODE_MEM (UCODE_MEM),
       .DISP_MEM  (DISP_MEM)
   ) u_cpu (
-      .clk (clk), .rst_n (core_rst_n), .clk_en (clk_en),
+      .clk (clk), .rst_n (core_rst_n), .clk_en (core_clk_en),
       .a (a), .din (din), .dout (dout),
       .mreq_n (mreq_n), .iorq_n (iorq_n), .rd_n (rd_n), .wr_n (wr_n),
       .m1_n (m1_n), .rfsh_n (rfsh_n), .halt_n (halt_n), .busak_n (busak_n),
-      .wait_n (wait_n), .int_n (1'b1), .nmi_n (1'b1), .busrq_n (1'b1)
+      .wait_n (wait_n), .int_n (1'b1), .nmi_n (1'b1), .busrq_n (1'b1),
+      .dbg_at_boundary (dbg_at_boundary), .dbg_pc (dbg_pc),
+      .dbg_reg_sel (dbg_reg_sel), .dbg_reg_hi (dbg_reg_hi),
+      .dbg_reg_rdata (dbg_reg_rdata),
+      .dbg_wr_en (dbg_wr_en), .dbg_wr_sel (dbg_wr_sel),
+      .dbg_wr_hi (dbg_wr_hi), .dbg_wr_data (dbg_wr_data)
   );
 
   // -------------------------------------------------------------------- the MMU
@@ -220,7 +253,9 @@ module z80_soc #(
       .cpu_addr (mem_addr), .port_addr (a[7:0]), .port_wdata (dout),
       .port_wr (port_wr && clk_en),
       .port_rdata (mmu_rdata), .port_hit (mmu_hit),
-      .phys_addr (phys), .sel_rom (sel_rom), .bank_valid (bank_valid)
+      .phys_addr (phys), .sel_rom (sel_rom), .bank_valid (bank_valid),
+      .bank_ovr_en (dbg_ovr_en), .bank_ovr (dbg_ovr_bank),
+      .cur_bank_o (cur_bank)
   );
 
   // ----------------------------------------------------------------- the memory
@@ -233,19 +268,23 @@ module z80_soc #(
   // on an I/O wait.  That is safe precisely because the core excludes I/O from
   // mem_cycle: mreq_n stays high for the whole stretched cycle, so the CPU is
   // not using memory and cannot be surprised by the address moving.
-  assign mem_addr   = dma_req ? dma_addr : a;
+  // The debug unit's request comes first; it only makes one while the core is
+  // stopped at an instruction boundary, when the core is not using the memory
+  // and hdsk is idle.
+  assign mem_addr   = dbg_req ? dbg_addr : dma_req ? dma_addr : a;
   // !sel_rom on both arms, not just the CPU's.  A DMA write while a ROM bank
   // is selected has no business landing anywhere, and with the ROM in SDRAM
   // it would be overwriting the firmware rather than merely shadowing it.
   // Unreachable before this: the only build with a DMA had its RAM in DDR2,
   // whose req is ram_cycle, which did carry the guard.
-  assign mem_wr_eff = (dma_req ? dma_we : mem_we) && !sel_rom;
-  assign mem_wdata  = dma_req ? dma_wdata : dout;
+  assign mem_wr_eff = (dbg_req ? dbg_we : dma_req ? dma_we : mem_we) && !sel_rom;
+  assign mem_wdata  = dbg_req ? dbg_wdata : dma_req ? dma_wdata : dout;
   assign dma_rdata  = (sel_rom && !SDRAM_ROM) ? rom_rdata : ram_rdata;
+  assign dbg_rdata  = dma_rdata;
 
   // With the ROM in the chip, every memory cycle is a cycle of the one memory,
   // so sel_rom stops excusing anything from it.
-  assign ram_cycle = dma_req ? (SDRAM_ROM || !sel_rom)
+  assign ram_cycle = (dma_req || dbg_req) ? (SDRAM_ROM || !sel_rom)
                              : (!mreq_n && (!rd_n || !wr_n) &&
                                 (SDRAM_ROM || !sel_rom));
 
@@ -312,7 +351,7 @@ module z80_soc #(
     end else begin : g_bram
       sync_ram #(.AW (RAM_AW)) u_ram (
           .clk (clk), .en (1'b1), .addr (phys[RAM_AW-1:0]),
-          .wdata (mem_wdata), .we (mem_wr_eff && (clk_en || dma_req)),
+          .wdata (mem_wdata), .we (mem_wr_eff && (clk_en || dma_req || dbg_req)),
           .rdata (ram_rdata)
       );
     end
@@ -362,6 +401,56 @@ module z80_soc #(
     if (!rst_n) led <= 8'h00;
     else if (port_wr && clk_en && a[7:0] == 8'hFF) led <= dout;
   end
+
+  // ------------------------------------------------------------- debug unit
+  generate
+    if (DEBUG_UNIT) begin : g_dbg
+      logic dbg_req_d;
+      always_ff @(posedge clk) dbg_req_d <= dbg_req;
+
+      // Same acknowledge as hdsk's DMA: block RAM answers one clock after the
+      // address, off-chip memory says when.
+      assign dbg_ack = !dbg_req ? 1'b0
+                     : ((SDRAM_ROM || !sel_rom) && (USE_DDR2 || USE_SDRAM))
+                         ? ram_ready
+                         : dbg_req_d;
+
+      logic dbg_stopped;
+      dbg_unit #(
+          .CLK_HZ (CLK_HZ), .BAUD (DBG_BAUD), .BP_N (DBG_BP_N),
+          .HALT_ON_RESET (DBG_HALT_ON_RESET),
+          .COMMON_BANK (8'h80 | 8'(RAM_BANKS - 1))
+      ) u_dbg (
+          .clk (clk), .rst_n (rst_n), .rx (dbg_rx), .tx (dbg_tx),
+          .clk_en (clk_en), .core_clk_en (core_clk_en),
+          .at_boundary (dbg_at_boundary), .core_pc (dbg_pc),
+          .reg_sel (dbg_reg_sel), .reg_hi (dbg_reg_hi),
+          .reg_rdata (dbg_reg_rdata),
+          .reg_wr_en (dbg_wr_en), .reg_wr_sel (dbg_wr_sel),
+          .reg_wr_hi (dbg_wr_hi), .reg_wr_data (dbg_wr_data),
+          .cur_bank (cur_bank), .ovr_en (dbg_ovr_en), .ovr_bank (dbg_ovr_bank),
+          .mem_req (dbg_req), .mem_we (dbg_we), .mem_addr (dbg_addr),
+          .mem_wdata (dbg_wdata), .mem_rdata (dbg_rdata), .mem_ack (dbg_ack),
+          .stopped (dbg_stopped)
+      );
+    end else begin : g_nodbg
+      assign core_clk_en  = clk_en;
+      assign dbg_tx       = 1'b1;
+      assign dbg_reg_sel  = 5'd0;
+      assign dbg_reg_hi   = 1'b0;
+      assign dbg_wr_en    = 1'b0;
+      assign dbg_wr_sel   = 5'd0;
+      assign dbg_wr_hi    = 1'b0;
+      assign dbg_wr_data  = 8'd0;
+      assign dbg_ovr_en   = 1'b0;
+      assign dbg_ovr_bank = 8'd0;
+      assign dbg_req      = 1'b0;
+      assign dbg_we       = 1'b0;
+      assign dbg_addr     = 16'd0;
+      assign dbg_wdata    = 8'd0;
+      assign dbg_ack      = 1'b0;
+    end
+  endgenerate
 
   // ------------------------------------------------------------------- HDSK
   generate
@@ -510,7 +599,8 @@ module z80_soc #(
 
   // pins this SoC has no use for, tied off so lint does not complain
   logic unused;
-  assign unused = &{1'b0, halt_n, rfsh_n, busak_n, phys[18:15]};
+  assign unused = &{1'b0, halt_n, rfsh_n, busak_n, phys[18:15], dbg_rx,
+                    dbg_req, cur_bank, dbg_rdata, dbg_ack};
 
 endmodule
 

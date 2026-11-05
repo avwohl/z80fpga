@@ -182,6 +182,10 @@ raise it; tie it high to run at the fabric clock. The pins behave like the
 part: M1 with a refresh address on T3–T4, 3-T memory cycles, 4-T I/O cycles,
 WAIT stretching, and NMI, IM 0, IM 1 and IM 2 interrupt acknowledge.
 
+The core has nine more ports for the debug unit, and the parameter `DEBUG_UNIT`
+builds the logic behind them. With the parameter at 0, the outputs are constants
+and the inputs are not read. [debug_unit.md](debug_unit.md) has the details.
+
 `STROBE_1T` picks between the one-T-state strobes the test suite models
 (default, and what a synchronous FPGA memory wants) and holding MREQ/RD/WR
 across the cycle the way the real part drives an external bus.

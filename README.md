@@ -91,6 +91,7 @@ never run, and the [Qomu](boards/qomu/) does not fit.
 - [docs/memory_banking.md](docs/memory_banking.md) - the bank map
 - [docs/romwbw.md](docs/romwbw.md) - how a stock RomWBW ROM boots on this core, all the way to CP/M 2.2 on real hardware, and what the console has to look like for that
 - [docs/roadmap.md](docs/roadmap.md) - what the Z180 and eZ80 need
+- [docs/debug_unit.md](docs/debug_unit.md) - the debug unit: halt, step, breakpoints and memory access over a serial line, and the GDB bridge
 - [docs/vivado_license.md](docs/vivado_license.md) - for the Vivado builds: what the free licence is called since 2026.1 renamed it, and how to get one
 
 ## Licence

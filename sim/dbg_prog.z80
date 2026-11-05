@@ -1,0 +1,36 @@
+; The program the debug unit's benches load and debug.  It sits at 8000H, in
+; the common bank, which is RAM on every build, so a debugger can load it with
+; memory writes and point PC at it.  Every address below is part of the test:
+; sim/tb_debug.sv and tools/test_z80dbg_bridge.py name them.
+;
+;   8000  start
+;   800F  inc a        the first breakpoint
+;   8013  ld a,77h
+;   8015  ld ix,1234h  four bytes, a prefixed instruction: one step crosses it
+;   801D  call 0100h   the routine at 0100H in RAM bank 80H (06 5A C9),
+;                      which the debugger writes with the bank override
+;   8024  exx, then ex af,af': the alternate set gets BC=5A33, DE=4455, HL=9001
+;                      (9002 on a second pass from 800F) and A=00
+;   8026  spin         where a run ends
+
+        org  08000h
+start:  ld   a,011h
+        ld   bc,02233h
+        ld   de,04455h
+        ld   hl,09000h
+        ld   sp,0F000h
+        ld   (hl),a            ; [9000] = 11
+        inc  a                 ; A = 12
+        inc  hl
+        ld   (hl),a            ; [9001] = 12
+        push bc                ; [EFFE] = 33, [EFFF] = 22, SP = EFFE
+        ld   a,077h
+        ld   ix,01234h
+        ld   a,080h
+        out  (078h),a          ; low window = RAM bank 80H
+        call 00100h
+        ld   a,0
+        out  (078h),a          ; and back to ROM bank 0
+        exx
+        ex   af,af'
+spin:   jp   spin

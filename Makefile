@@ -8,6 +8,7 @@
 #   make boot       assemble sw/boot.z80
 #   make lint       Verilator lint over the core and the SoC
 #   make synth      iCE40 resource report for the core alone
+#   make test-debug the debug unit: three RTL benches and the GDB bridge
 
 # The recipes are POSIX shell, and on Windows mingw32-make would otherwise
 # hand them to cmd.exe - where Verilator's wrapper cannot find its own root.
@@ -36,7 +37,9 @@ boot sw/boot.hex: sw/boot.z80 tools/zasm.py
 
 sim: sim/tb_sst.vvp sim/tb_soc.vvp sim/tb_irq.vvp sim/tb_ddr2ram.vvp \
      sim/tb_sdram.vvp sim/tb_sdram_soc.vvp sim/tb_romload.vvp \
-     sim/tb_hdsk.vvp sim/tb_hdsk_soc.vvp
+     sim/tb_hdsk.vvp sim/tb_hdsk_soc.vvp \
+     sim/tb_debug.vvp sim/tb_debug_div3.vvp sim/tb_debug_ddr2.vvp \
+     sim/tb_debug_cosim.vvp
 
 sim/tb_sst.vvp: sim/tb_sst.sv $(CORE) $(GEN)
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_sst.sv $(CORE)
@@ -152,8 +155,47 @@ sim/hdsk_test.hex: sim/hdsk_test.z80 tools/zasm.py
 sim/tb_hdsk_soc.vvp: sim/tb_hdsk_soc.sv $(SOC) rtl/mem/ddr2_ram.sv rtl/soc/sd_spi.sv rtl/soc/hdsk.sv $(GEN) sim/hdsk_test.hex
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_hdsk_soc.sv $(SOC) rtl/mem/ddr2_ram.sv rtl/soc/sd_spi.sv rtl/soc/hdsk.sv
 
+# The debug unit (docs/debug_unit.md).  The SoC builds it only with DEBUG_UNIT,
+# and the benches set that, so the files are listed here and in no board.  The
+# three tb_debug variants are one source: Icarus 13 does not take -P for a
+# parameter of the top module, so -D macros pick CPU_DIV, DDR2 and halt-on-reset.
+DBG := rtl/soc/dbg_uart.sv rtl/soc/dbg_unit.sv
+
+sim/dbg_prog.hex: sim/dbg_prog.z80 tools/zasm.py
+	$(PYTHON) tools/zasm.py sim/dbg_prog.z80 -o $@ --size 32809
+
+# CPU_DIV 1, RAM in block RAM, stopped out of reset
+sim/tb_debug.vvp: sim/tb_debug.sv sim/dbg_host.svh $(SOC) $(DBG) rtl/mem/ddr2_ram.sv $(GEN) sw/boot.hex sim/dbg_prog.hex
+	$(IVERILOG) -g2012 -I rtl/core -I sim -o $@ sim/tb_debug.sv $(SOC) $(DBG) rtl/mem/ddr2_ram.sv
+
+# CPU_DIV 3, so a stop has to land on an enable tick; the boot monitor runs
+# first and is halted in flight
+sim/tb_debug_div3.vvp: sim/tb_debug.sv sim/dbg_host.svh $(SOC) $(DBG) rtl/mem/ddr2_ram.sv $(GEN) sw/boot.hex sim/dbg_prog.hex
+	$(IVERILOG) -g2012 -I rtl/core -I sim -DDBG_CPU_DIV=3 -DDBG_HOR=0 -o $@ sim/tb_debug.sv $(SOC) $(DBG) rtl/mem/ddr2_ram.sv
+
+# RAM in DDR2 behind the AXI slave of tb_ddr2ram, CPU_DIV 3: the stack is in DDR2
+sim/tb_debug_ddr2.vvp: sim/tb_debug.sv sim/dbg_host.svh $(SOC) $(DBG) rtl/mem/ddr2_ram.sv $(GEN) sw/boot.hex sim/dbg_prog.hex
+	$(IVERILOG) -g2012 -I rtl/core -I sim -DDBG_DDR2=1 -DDBG_CPU_DIV=3 -o $@ sim/tb_debug.sv $(SOC) $(DBG) rtl/mem/ddr2_ram.sv
+
+# The same SoC as a server on stdin and stdout, for tools/test_z80dbg_bridge.py
+sim/tb_debug_cosim.vvp: sim/tb_debug_cosim.sv $(SOC) $(DBG) $(GEN) sw/boot.hex
+	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_debug_cosim.sv $(SOC) $(DBG)
+
+test-debug: sim/tb_debug.vvp sim/tb_debug_div3.vvp sim/tb_debug_ddr2.vvp sim/tb_debug_cosim.vvp
+	$(VVP) sim/tb_debug.vvp
+	$(VVP) sim/tb_debug_div3.vvp
+	$(VVP) sim/tb_debug_ddr2.vvp
+	$(PYTHON) tools/test_z80dbg_bridge.py
+
 romwbw: sim/tb_romwbw.vvp sim/romwbw512k.hex
 	$(VVP) sim/tb_romwbw.vvp
+
+# The debug unit on a stock RomWBW ROM (needs the same image as "romwbw").
+sim/tb_romwbw_dbg.vvp: sim/tb_romwbw_dbg.sv sim/dbg_host.svh $(SOC) $(DBG) $(GEN)
+	$(IVERILOG) -g2012 -I rtl/core -I sim -o $@ sim/tb_romwbw_dbg.sv $(SOC) $(DBG)
+
+romwbw-debug: sim/tb_romwbw_dbg.vvp sim/romwbw512k.hex
+	$(VVP) sim/tb_romwbw_dbg.vvp
 
 test: sim
 	$(PYTHON) tools/test_zasm.py
@@ -165,6 +207,7 @@ test: sim
 	$(VVP) sim/tb_romload.vvp
 	$(VVP) sim/tb_hdsk.vvp
 	$(VVP) sim/tb_hdsk_soc.vvp
+	$(MAKE) test-debug
 	$(PYTHON) tools/run_sst.py --all -n 20 --cycles
 
 test-full: sim
@@ -183,9 +226,9 @@ synth: $(GEN)
 # sw/boot.hex is committed, so it is deliberately not here: clean must not
 # dirty the tree.
 clean:
-	rm -f sim/*.vvp sim/vec.txt sim/res.txt sim/boot2k.hex sim/hdsk_test.hex
+	rm -f sim/*.vvp sim/vec.txt sim/res.txt sim/boot2k.hex sim/hdsk_test.hex sim/dbg_prog.hex
 	rm -f sim/romwbw*.hex sim/romwbw-fetched.rom sim/*.provenance.json sim/*.partial
 
 FORCE:
 
-.PHONY: all gen boot sim romwbw test test-full test-romwbw512 lint synth clean FORCE
+.PHONY: all gen boot sim romwbw romwbw-debug test test-debug test-full test-romwbw512 lint synth clean FORCE

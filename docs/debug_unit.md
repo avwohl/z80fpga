@@ -1,0 +1,260 @@
+# Debug unit
+
+The debug unit lets a host program stop the Z80, step the Z80, set breakpoints,
+and read and write registers and memory. The host talks to the unit over a
+serial line of its own. The console stays with the guest. The design is
+phase 10 of `docs/debugger_plan.md` in the cpmemu repository.
+
+The debug unit is off by default. A build that sets the parameter `DEBUG_UNIT`
+to 1 on `z80_soc` has the debug unit. A build that leaves the parameter at 0 has
+none of the debug unit logic. The simulation results of that build are the same
+as before, and the generic cells of `z80_core` are the same. The Vivado netlist
+of the Nexys build with the parameter at 0 is not proven until someone runs
+step 2 of `MANUAL_CHECKS.md`.
+
+## Parts
+
+- `rtl/soc/dbg_unit.sv` holds the command decoder, the breakpoints and the
+  stop control.
+- `rtl/soc/dbg_uart.sv` is a small 8N1 serial port for the unit.
+- `rtl/core/z80_core.sv` has the register hooks. The hooks exist only when
+  its parameter `DEBUG_UNIT` is 1.
+- `rtl/soc/z80_mmu.sv` has a bank override for the low 32 KB window.
+- `rtl/soc/z80_soc.sv` connects the parts, and shares the memory port with
+  the HDSK DMA.
+- `tools/z80dbg_bridge.py` turns the serial protocol into GDB remote serial
+  protocol (RSP).
+
+## Parameters of `z80_soc`
+
+- `DEBUG_UNIT`: 1 builds the unit. The default is 0.
+- `DBG_BAUD`: the baud rate of the unit. The default is 115200.
+- `DBG_BP_N`: the number of hardware breakpoints, 1 to 8. The default is 4.
+- `DBG_HALT_ON_RESET`: 1 holds the core stopped at 0000H after reset.
+  The default is 0.
+
+The ports `dbg_rx` and `dbg_tx` carry the serial line. A build with no unit
+leaves both ports unconnected.
+
+## How the unit stops the core
+
+The unit gates the clock enable of the core. The core stops only at an
+instruction boundary. The core output `dbg_at_boundary` marks the boundary.
+The boundary is the first T-state of an opcode fetch that does not follow a
+prefix byte. At the boundary every register is complete and no bus cycle is
+half done.
+
+A stop has three causes: a halt request from the host, the end of a single
+step, and a breakpoint. The status reply tells which cause stopped the core.
+
+A resume sets a `skip` flag. The flag stays set until the core leaves the
+boundary. The `skip` flag lets the core run on from an address that has a
+breakpoint, as GDB expects.
+
+The unit does not stop at an interrupt acknowledge. The SoC does not connect
+the interrupt pins today, so the missing stop has no effect yet.
+
+## Breakpoints
+
+Each breakpoint holds a 16-bit address, an enable bit and a bank. The unit
+compares the address with PC at each boundary. A breakpoint can also name a bank.
+The unit then compares the bank of the breakpoint with the bank that PC uses.
+
+PC at 8000H or above always uses the common bank. PC below 8000H uses the bank
+that the CPU selected. The unit never writes a breakpoint byte into memory, so
+a breakpoint works in ROM.
+
+## Memory access at a stop
+
+The unit uses the memory port of the SoC through the same multiplexer as the
+HDSK DMA. A read or a write goes through the MMU, and then to block RAM, DDR2
+or SDRAM. The core is idle at the boundary, so the port is free. The unit
+waits for the same ready signal that the HDSK DMA uses.
+
+The command `K` makes the MMU show a chosen bank in the low 32 KB. The CPU bank
+register does not change. A write to a ROM bank has no effect.
+
+Do not use the memory commands while `rom_loader` stages the ROM into SDRAM.
+The loader owns the memory port until `rom_done` rises.
+
+## Serial protocol
+
+The host sends a command byte and its arguments. The unit answers with the
+command byte, or with `E` and an error code. Multi-byte values are little
+endian. The unit drops a command that stops half way after 10 ms without a byte.
+To resynchronize, the host keeps quiet for 12 ms and then sends `N`.
+
+| Command | Arguments | Reply |
+|---|---|---|
+| `N` | none | `N` |
+| `S` | none | `S`, state, number of breakpoints, protocol revision |
+| `H` | none | `H`. The core stops at the next boundary. |
+| `C` | none | `C`. The core runs. |
+| `T` | none | `T`. The core runs one instruction. |
+| `R` | register | `R`, low byte, high byte |
+| `W` | register, low byte, high byte | `W` |
+| `M` | address (2), length | `M`, then the bytes. Length 0 means 256. |
+| `P` | address (2), length, bytes | `P`, after the last byte |
+| `B` | index, address (2), bank, flags | `B` |
+| `K` | flags, bank | `K` |
+
+Flags of `B`: bit 0 enables the breakpoint. Bit 1 makes the bank count.
+Flag of `K`: bit 0 turns the bank override on.
+
+State byte of `S`: bit 0 is high when the core has stopped. Bit 1 is high
+after a breakpoint stop. Bit 2 is high after a step stop. Bit 3 is high after
+a halt request stop. Bit 4 is high when the override is on.
+
+Bits 7 to 5 hold the number of the breakpoint that stopped the core.
+
+Error codes: `01` the core is running, `02` unknown command, `03` bad
+breakpoint number, `04` the register has no write port.
+
+Register numbers: 0 AF, 1 BC, 2 DE, 3 HL, 4 AF', 5 BC', 6 DE', 7 HL', 8 IX,
+9 IY, 10 SP, 11 PC, 12 IR, 13 WZ. Register 14 holds the flags IFF1 (bit 0),
+IFF2 (bit 1), IM (bits 3 and 2) and HALT (bit 4). A write to register 11 (PC)
+also clears HALT, so the core runs the code at the new PC. A core that stopped
+on a HALT instruction would otherwise stay in the HALT state. Register 15 is
+the bank that the CPU selected.
+
+The core has no write port for the alternate set (registers 4 to 7). Register 15
+belongs to the MMU. A write to register 4, 5, 6, 7 or 15 returns `E 04`.
+
+## The GDB bridge
+
+`tools/z80dbg_bridge.py` listens on `127.0.0.1` and speaks the GDB remote
+serial protocol. The bridge offers the same packets as the cpmemu stub: `?`, `g`, `G`,
+`p`, `P`, `m`, `M`, `c`, `s`, `Z0`, `z0`, `Z1`, `z1`, `vCont`, `qSupported`,
+`qXfer:features:read` for `target.xml`, `qRcmd` and the byte 03H. The register set
+is the 13 registers of cpmemu, all 16 bits wide.
+
+```
+python3 tools/z80dbg_bridge.py --serial /dev/cu.usbserial-XXXX --listen 1234
+gdb
+(gdb) set architecture z80
+(gdb) target remote :1234
+```
+
+The bridge needs `pyserial` for `--serial`. The `monitor` commands use the
+words of romwbw_emu:
+
+- `monitor bank XX` shows bank XX in the low 32 KB. `monitor bank cur` returns
+  to the bank of the CPU.
+- `monitor break-bank XX` makes breakpoints below 8000H apply in bank XX only.
+  `monitor break-bank off` removes the limit.
+- `monitor status` shows the state of the unit.
+
+The unit has 4 breakpoints by default. The bridge answers the fifth `Z0` or `Z1` with `E0e`.
+The unit has no watchpoints, so the bridge answers `Z2` to `Z4` with an empty reply. A `G`
+packet writes only the registers that differ from the registers of the unit.
+A changed alternate register returns `E01`.
+
+## Tests
+
+`make test-debug` builds and runs four tests. `make test` includes the four tests.
+On the host "Mac" (Icarus Verilog 13.0, `PYTHON=python3`), the results were:
+
+```
+tb_debug.vvp         305 checks, CPU_DIV 1, RAM in block RAM, stopped at reset
+tb_debug_div3.vvp    308 checks, CPU_DIV 3, boot monitor halted in flight
+tb_debug_ddr2.vvp    317 checks, CPU_DIV 3, RAM in DDR2, stack in DDR2
+test_z80dbg_bridge   130 checks, RSP client, bridge, and the RTL
+```
+
+`sim/tb_debug.sv` plays the host. The bench runs the program in
+`sim/dbg_prog.z80`. The tasks of the host side are in `sim/dbg_host.svh`.
+
+The bench checks the registers in both directions. The bench checks ROM, RAM and
+bank-override memory. The bench checks a breakpoint and a bank-qualified
+breakpoint that misses and then hits. The bench checks single steps across a
+prefixed instruction, the halt request, the error replies and the timeout. The
+bench also runs a program that ends in HALT, stops the program, writes PC and
+checks that the program runs again. In
+the DDR2 variant, the bench also reads the stack bytes from the
+DDR2 model.
+
+`sim/tb_debug_cosim.sv` runs the same SoC as a server on standard input and
+output. `tools/test_z80dbg_bridge.py` starts the bridge on this server and
+runs a GDB session through a socket. The answers come from the RTL, not from
+a model. The bench reads standard input through the Icarus descriptor
+`32'h8000_0000`. The author ran the test on macOS only. No one has run the test
+on a Windows build of `vvp`.
+
+### Test on a RomWBW ROM
+
+`make romwbw-debug` runs `sim/tb_romwbw_dbg.sv`. The bench is `tb_romwbw.sv`
+with `DEBUG_UNIT` at 1. The bench needs the same ROM image as `make romwbw`
+(for example `ROMWBW_VERSION=3.6.0`). The bench does these steps:
+
+1. Read three ROM banks through the override and compare them with the image.
+2. Step the first instruction of RomWBW (`JP 056CH`).
+3. Run to a breakpoint in ROM bank 0.
+4. Remove the breakpoint, let HBIOS run to the boot prompt, and check that the
+   console prints the prompt.
+5. Halt the core at the prompt and step twelve instructions.
+6. Set a breakpoint with a bank that does not match, and check that the core
+   does not stop.
+7. Set the same breakpoint with the right bank, and check the stop and the
+   next step.
+
+The run takes 2 to 3 minutes on the host "Mac". With RomWBW 3.6.0
+(`SBC_simh_std.rom`), the result was `PASS: 196 checks`. `make test` does not
+run this bench, because the ROM image is not in the repository.
+
+GDB 18.1 for z80 ran against the bridge and `tb_debug_cosim.vvp` on
+2026-11-04: `target remote`, `info registers`, `stepi`, `x/8xb 0x0`, and
+`break *0x8000` with `continue` worked (measured). No one has run `udb80`
+against the bridge yet: see item 13 of `MANUAL_CHECKS.md`.
+
+Five changes to the RTL each made the benches fail: no `skip` flag, no bank
+compare, a stop inside a prefixed instruction, no bank override, and no PC
+write. The failures show that the benches check these functions.
+
+## Cost
+
+yosys 0.70 (the `yowasp-yosys` package) mapped the SoC with the Nexys RomWBW
+parameters to Xilinx 7-series cells. The ROM was 64 KB for this run. The unit
+adds 535 LUTs and 369 flip-flops (4677 LUTs and 1417 flip-flops, against 4142
+and 1048 with the parameter at 0). The unit adds no RAMB tile and no LUT RAM.
+
+The mapping of the same logic varies from run to run by about 80 LUTs, so
+treat the numbers as an estimate of 550 LUTs. A Vivado run gives the real
+number.
+
+With `DEBUG_UNIT` at 0, the generic cells of `z80_core` are the same as the
+cells of the commit before the unit (30 `$add`, 424 `$mux` and the rest). The
+cells of the whole SoC with the Nexys parameters are the same too. A comparison
+used the yosys commands `proc; flatten; opt -full`. The SoC has 4142 LUTs,
+against 4063 LUTs before the unit. The difference comes from the mapping. From
+the same generic cells, `z80_core` alone maps to 3107 LUTs before the unit and
+to 3012 LUTs after the unit.
+
+## Nexys A7 build
+
+The option is off by default. To build it, set `Z80_DEBUG_UNIT=1` in the
+environment of `build_romwbw.tcl`. The script then adds the two RTL files, the
+macro `WITH_DEBUG_UNIT` and `romwbw_dbg.xdc`. The serial line uses Pmod JA pin 1
+(`dbg_rx`) and Pmod JA pin 2 (`dbg_tx`). Use a 3.3 V serial adapter. Connect
+the GND of the adapter to JA pin 5.
+
+Rebuild the board after any change to `rtl/`, and read the DRC messages. The
+Nexys RomWBW build is at 94.81 percent of the block RAM, and `CLAUDE.md` has
+the history. `MANUAL_CHECKS.md` has the steps for the first run on the board.
+
+## Limits
+
+- The unit has 4 breakpoints by default, 8 at most, and no watchpoints.
+- The unit does not stop at an interrupt acknowledge.
+- The host cannot write the alternate register set and the bank register.
+- The unit cannot stop the core inside an instruction.
+- The unit has no flow control. The host must wait for each reply.
+- The bank override reaches the low window only.
+- The address path to memory has one more multiplexer. Check the timing slack
+  of the Nexys build. `romwbw.xdc` has 12-cycle exceptions for the flops of
+  `u_cpu`, `u_mmu`, `u_uart`, `u_hdsk` and `led_reg`, and no exception for the
+  flops of `u_dbg`. Two paths run in one cycle of the 81.25 MHz clock. The first
+  path goes from PC through the breakpoint compare into `stopped`. The second
+  path goes from `stopped` and `skip` into `core_clk_en`, which drives the
+  clock enable of the flops of the core. If a worst path that starts or ends
+  in `u_dbg` fails, register the stop signal in `dbg_unit`. The stop then lands
+  one enable tick later.

@@ -54,3 +54,4 @@ sim/_*
 boards/icepi_zero/sdram/boot16.z80
 boards/icepi_zero/romwbw/hdsk_test.hex
 boards/tang_nano_20k/report.hex
+sim/dbg_prog.hex

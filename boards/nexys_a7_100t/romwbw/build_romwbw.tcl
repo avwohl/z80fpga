@@ -73,6 +73,12 @@ set_property -dict [list \
 generate_target all [get_ips clk_wiz_0]
 
 # ------------------------------------------------------------------- sources
+# Z80_DEBUG_UNIT=1 in the environment adds the debug unit (docs/debug_unit.md):
+# its two RTL files, the macro that gives top_romwbw.sv its two extra ports,
+# and romwbw_dbg.xdc for the pins.  Unset, none of that happens and this is
+# the build that ran on the board.
+set with_dbg [expr {[info exists ::env(Z80_DEBUG_UNIT)] && $::env(Z80_DEBUG_UNIT) eq "1"}]
+
 add_files [list \
     $root/rtl/core/z80_alu.sv \
     $root/rtl/core/z80_core.sv \
@@ -84,6 +90,12 @@ add_files [list \
     $here/top_romwbw.sv]
 set_property include_dirs $root/rtl/core [current_fileset]
 add_files -fileset constrs_1 $here/romwbw.xdc
+if {$with_dbg} {
+    add_files [list $root/rtl/soc/dbg_uart.sv $root/rtl/soc/dbg_unit.sv]
+    set_property verilog_define {WITH_DEBUG_UNIT=1} [current_fileset]
+    add_files -fileset constrs_1 $here/romwbw_dbg.xdc
+    puts "debug unit: ON, serial line on Pmod JA1 (dbg_rx) and JA2 (dbg_tx)"
+}
 set_property top top_romwbw [current_fileset]
 update_compile_order -fileset sources_1
 

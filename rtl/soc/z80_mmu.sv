@@ -41,7 +41,15 @@ module z80_mmu #(
     // memory side
     output logic [18:0] phys_addr,     // byte address inside the chosen space
     output logic        sel_rom,
-    output logic        bank_valid     // 0 when the id names a bank we lack
+    output logic        bank_valid,    // 0 when the id names a bank we lack
+
+    // For the debug unit.  While bank_ovr_en is high the low window shows
+    // bank_ovr instead of the selected bank, so the unit can read or write any
+    // bank without touching the CPU's selection.  The high window is always
+    // the common bank.  A SoC with no debug unit ties bank_ovr_en to 0.
+    input  logic        bank_ovr_en,
+    input  logic  [7:0] bank_ovr,
+    output logic  [7:0] cur_bank_o     // the CPU's own selection
 );
 
   logic [7:0] cur_bank;
@@ -55,7 +63,9 @@ module z80_mmu #(
   end
 
   // low 32 KB is banked, high 32 KB is the common bank
-  assign bank       = cpu_addr[15] ? COMMON_BANK : cur_bank;
+  assign bank       = cpu_addr[15] ? COMMON_BANK
+                    : bank_ovr_en  ? bank_ovr : cur_bank;
+  assign cur_bank_o = cur_bank;
   assign sel_rom    = ~bank[7];
   assign phys_addr  = {bank[3:0], cpu_addr[14:0]};
   assign bank_valid = sel_rom ? (bank[3:0] < ROM_BANKS[3:0] || ROM_BANKS == 16)

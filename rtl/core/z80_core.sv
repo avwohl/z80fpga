@@ -26,6 +26,9 @@
 
 module z80_core #(
     parameter bit STROBE_1T = 1'b1,
+    // 1: build the hooks that rtl/soc/dbg_unit.sv uses (see the ports at the
+    // end of the list).  0: they are constants and none of their logic exists.
+    parameter bit DEBUG_UNIT = 1'b0,
     parameter     UCODE_MEM = "z80_ucode.mem",
     parameter     DISP_MEM  = "z80_dispatch.mem"
 ) (
@@ -49,7 +52,28 @@ module z80_core #(
     input  logic        wait_n,
     input  logic        int_n,
     input  logic        nmi_n,
-    input  logic        busrq_n
+    input  logic        busrq_n,
+
+    // Debug unit hooks, meaningful only when DEBUG_UNIT.  A bench or a board
+    // that has no debug unit leaves all of them unconnected: the outputs are
+    // constants, and the inputs are not read.
+    //
+    // dbg_at_boundary is high from the edge that ends one instruction until the
+    // first clk_en tick of the next, which is the only time the architectural
+    // state is a whole one.  Registers go through one byte at a time, which is
+    // a third of the logic a 16-bit path costs: dbg_reg_sel names a register
+    // and dbg_reg_hi picks its half.  The register numbers are in
+    // docs/debug_unit.md.  A write needs clk_en low, and takes effect on the
+    // clock edge that sees dbg_wr_en.
+    output logic        dbg_at_boundary,
+    output logic [15:0] dbg_pc,
+    input  logic  [4:0] dbg_reg_sel,
+    input  logic        dbg_reg_hi,
+    output logic  [7:0] dbg_reg_rdata,
+    input  logic        dbg_wr_en,
+    input  logic  [4:0] dbg_wr_sel,
+    input  logic        dbg_wr_hi,
+    input  logic  [7:0] dbg_wr_data
 );
 
 `include "z80_defs.svh"
@@ -339,6 +363,90 @@ module z80_core #(
                     (!in_exec || cur_bus == BUS_MR || cur_bus == BUS_IOR));
   assign wr_n   = !(strobe_win && is_write);
 
+
+  // ======================================================================
+  // debug unit hooks
+  // ======================================================================
+  // An instruction boundary is the first T-state of an opcode fetch that is
+  // not the second byte of a prefixed instruction: first_m1 is set by the end
+  // of the previous instruction and cleared by the first fetch, prefix or not.
+  // A pending interrupt acknowledge is a boundary too, but one in a different
+  // phase, so it is not reported here and the unit stops after it instead.
+  //
+  // A register write from the unit goes through the same single 8-bit write
+  // port (wr8_*, below) as the micro-code's own, so it costs a multiplexer on
+  // that port and not a second decoder on every register.  IX and IY have no
+  // register number of their own there: they are DAT_H and DAT_L under a
+  // prefix, so the unit forces the prefix for the write (wr_pfx, wr_iy).  The
+  // alternate set has no write port at all, and the unit refuses a write to it.
+  logic        dbg_wr_go;        // a byte write to the main register file
+  logic  [4:0] dbg_wr_dat;       // its DAT_* register
+  logic        wr_pfx, wr_iy;    // the prefix state wreg() sees
+  logic        dbg_wr_misc;      // IFF1, IFF2, IM, HALT
+
+  generate
+    if (DEBUG_UNIT) begin : g_dbg
+      assign dbg_at_boundary = (phase == PH_M1) && first_m1 && (tcnt == 4'd1);
+      assign dbg_pc          = rPC;
+
+      logic [15:0] rsel_w;
+      always_comb begin
+        case (dbg_reg_sel)
+          5'd0:    rsel_w = {rA, rF};
+          5'd1:    rsel_w = {rB, rC};
+          5'd2:    rsel_w = {rD, rE};
+          5'd3:    rsel_w = {rH, rL};
+          5'd4:    rsel_w = {sA, sF};
+          5'd5:    rsel_w = {sB, sC};
+          5'd6:    rsel_w = {sD, sE};
+          5'd7:    rsel_w = {sH, sL};
+          5'd8:    rsel_w = rIX;
+          5'd9:    rsel_w = rIY;
+          5'd10:   rsel_w = rSP;
+          5'd11:   rsel_w = rPC;
+          5'd12:   rsel_w = {rI, rR};
+          5'd13:   rsel_w = rWZ;
+          5'd14:   rsel_w = {11'd0, halted, im, iff2, iff1};
+          default: rsel_w = 16'h0000;
+        endcase
+      end
+      assign dbg_reg_rdata = dbg_reg_hi ? rsel_w[15:8] : rsel_w[7:0];
+
+      always_comb begin
+        dbg_wr_go  = dbg_wr_en;
+        dbg_wr_dat = DAT_NONE;
+        wr_pfx     = pfx_v;
+        wr_iy      = pfx_iy;
+        case (dbg_wr_sel)
+          5'd0:    dbg_wr_dat = dbg_wr_hi ? DAT_A    : DAT_F;
+          5'd1:    dbg_wr_dat = dbg_wr_hi ? DAT_B    : DAT_C;
+          5'd2:    dbg_wr_dat = dbg_wr_hi ? DAT_D    : DAT_E;
+          5'd3:    dbg_wr_dat = dbg_wr_hi ? DAT_HRAW : DAT_LRAW;
+          5'd8, 5'd9: begin
+            dbg_wr_dat = dbg_wr_hi ? DAT_H : DAT_L;
+            wr_pfx     = 1'b1;
+            wr_iy      = dbg_wr_sel[0];
+          end
+          5'd10:   dbg_wr_dat = dbg_wr_hi ? DAT_SPH : DAT_SPL;
+          5'd11:   dbg_wr_dat = dbg_wr_hi ? DAT_PCH : DAT_PCL;
+          5'd12:   dbg_wr_dat = dbg_wr_hi ? DAT_I   : DAT_R;
+          5'd13:   dbg_wr_dat = dbg_wr_hi ? DAT_W   : DAT_Z;
+          default: dbg_wr_go  = 1'b0;               // 4-7, 14, 15: not here
+        endcase
+      end
+      assign dbg_wr_misc = dbg_wr_en && !dbg_wr_hi && (dbg_wr_sel == 5'd14);
+    end else begin : g_nodbg
+      assign dbg_at_boundary = 1'b0;
+      assign dbg_pc          = 16'h0000;
+      assign dbg_reg_rdata   = 8'h00;
+      assign dbg_wr_go       = 1'b0;
+      assign dbg_wr_dat      = DAT_NONE;
+      assign wr_pfx          = pfx_v;
+      assign wr_iy           = pfx_iy;
+      assign dbg_wr_misc     = 1'b0;
+    end
+  endgenerate
+
   // ======================================================================
   // condition codes and the next-micro-op decision
   // ======================================================================
@@ -520,7 +628,11 @@ module z80_core #(
     wr8_en  = 1'b0;
     wr8_sel = DAT_NONE;
     wr8_val = din;
-    if (latch_now && in_exec) begin
+    if (dbg_wr_go) begin
+      wr8_en  = 1'b1;
+      wr8_sel = dbg_wr_dat;
+      wr8_val = dbg_wr_data;
+    end else if (latch_now && in_exec) begin
       wr8_en  = 1'b1;
       wr8_sel = resolve(`UF(uw_cur, PD));
     end else if (do_enter && (`UF(uw_ent, DD) != DAT_NONE)) begin
@@ -536,11 +648,11 @@ module z80_core #(
       DAT_C:    rC <= v;
       DAT_D:    rD <= v;
       DAT_E:    rE <= v;
-      DAT_H:    if (pfx_v) begin
-                  if (pfx_iy) rIY[15:8] <= v; else rIX[15:8] <= v;
+      DAT_H:    if (wr_pfx) begin
+                  if (wr_iy) rIY[15:8] <= v; else rIX[15:8] <= v;
                 end else rH <= v;
-      DAT_L:    if (pfx_v) begin
-                  if (pfx_iy) rIY[7:0] <= v; else rIX[7:0] <= v;
+      DAT_L:    if (wr_pfx) begin
+                  if (wr_iy) rIY[7:0] <= v; else rIX[7:0] <= v;
                 end else rL <= v;
       DAT_A:    rA <= v;
       DAT_F:    rF <= v;
@@ -799,6 +911,16 @@ module z80_core #(
       nmi_q <= nmi_n;
       if (nmi_q && !nmi_n) nmi_pend <= 1'b1;
 
+      // The register write port, with a debug unit: outside the clk_en block, so
+      // that the unit can write while clk_en is low, and in one place, so that
+      // its decoder is not built twice.  It is still ahead of everything that
+      // follows in program order.  Without a unit it is the line inside the
+      // block, where it always was, so that the netlist of every build that has
+      // no unit is the one it was before.
+      if (DEBUG_UNIT) begin
+        if (wr8_en && (clk_en || dbg_wr_go)) wreg(wr8_sel, wr8_val);
+      end
+
       if (clk_en) begin
         // The refresh address stays on the pins through any internal cycle
         // that follows the fetch, which is what the bus traces show.
@@ -808,7 +930,9 @@ module z80_core #(
           rDIN <= din;
           if (phase == PH_XD) rWZ[7:0] <= din;
         end
-        if (wr8_en) wreg(wr8_sel, wr8_val);
+        if (!DEBUG_UNIT) begin
+          if (wr8_en) wreg(wr8_sel, wr8_val);
+        end
 
         if (!cyc_done) begin
           if (!waiting) tcnt <= tcnt + 4'd1;
@@ -874,6 +998,22 @@ module z80_core #(
               end
             end
           end
+        end
+      end
+
+      // The flags the unit can set that are not registers.  With DEBUG_UNIT = 0
+      // the branch is not there, and the always_ff is the one it was before the
+      // unit existed.
+      if (DEBUG_UNIT) begin
+        if (dbg_wr_misc) begin
+          iff1   <= dbg_wr_data[0];
+          iff2   <= dbg_wr_data[1];
+          im     <= dbg_wr_data[3:2];
+          halted <= dbg_wr_data[4];
+        end else if (dbg_wr_go && dbg_wr_sel == 5'd11) begin
+          // A new PC ends the HALT state.  Else the core would keep running
+          // NOPs at the old PC, and a GDB "jump" or "set $pc" would do nothing.
+          halted <= 1'b0;
         end
       end
     end

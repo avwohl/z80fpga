@@ -52,6 +52,15 @@ module top_romwbw (
     inout  wire  [15:0] ddr2_dq,
     inout  wire  [1:0]  ddr2_dqs_p,
     inout  wire  [1:0]  ddr2_dqs_n
+`ifdef WITH_DEBUG_UNIT
+    ,
+    // The debug unit's serial line (docs/debug_unit.md), on Pmod JA pins 1 and
+    // 2 by romwbw_dbg.xdc.  build_romwbw.tcl defines WITH_DEBUG_UNIT only when
+    // the environment variable Z80_DEBUG_UNIT is 1; without it these lines do
+    // not exist and the build is the one that ran on the board.
+    input  logic        dbg_rx,
+    output logic        dbg_tx
+`endif
 );
 
   localparam int UI_CLK_HZ = 81_250_000;   // 325 MHz / 4
@@ -142,6 +151,12 @@ module top_romwbw (
       // makes place_design fail on a design at 94.81% of the part's block RAM.
       // rtl/soc/sd_spi.sv has the whole of it.
       .SD_BUF_MUX   (1'b0),
+`ifdef WITH_DEBUG_UNIT
+      .DEBUG_UNIT   (1'b1),
+      .DBG_BAUD     (115200),
+      .DBG_BP_N     (4),
+      .DBG_HALT_ON_RESET (1'b0),         // 1: stopped at 0000H, before the ROM runs
+`endif
       .USE_DDR2     (1'b1),
       .DDR2_BASE    (0),
       .ROM_BANKS    (16),                 // 512 KB in block RAM
@@ -157,6 +172,9 @@ module top_romwbw (
       // from the bridge's end.
       .uart_cts_n (uart_rts), .uart_rts_n (uart_cts),
       .led (led8), .sw (8'h00),
+`ifdef WITH_DEBUG_UNIT
+      .dbg_rx (dbg_rx), .dbg_tx (dbg_tx),
+`endif
 
       .sd_sck (sd_sck), .sd_mosi (sd_cmd), .sd_miso (sd_dat[0]), .sd_cs (sd_cs),
 
