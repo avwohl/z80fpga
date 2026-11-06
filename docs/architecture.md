@@ -70,6 +70,8 @@ carries an explicit "as the entry edge sees it" copy of each:
 | `q_x` | the fetch hands Q over to `qPrev`, which SCF and CCF read |
 | `r_x` | the refresh increment lands there, and `LD A,R` must see the new R |
 | `bc_x` | `OUTI` decrements B before the port address is driven |
+| `rdin_v` | with `LATE_READ`, a read retires its byte on the action's edge; JR, `ADD A,(HL)` and the rest read DIN there |
+| `rwz_v` | likewise WZ, which JP, RET, `IN A,(n)` and `LD A,(nn)` read on the edge that brings in W or Z |
 
 Each of these was a real bug the test suite caught. They are the price of
 applying actions on the retiring edge rather than a cycle later, and they are
@@ -173,7 +175,8 @@ z80_core #(.STROBE_1T(1)) (
     clk, rst_n, clk_en,
     a, din, dout,
     mreq_n, iorq_n, rd_n, wr_n, m1_n, rfsh_n, halt_n, busak_n,
-    wait_n, int_n, nmi_n, busrq_n
+    wait_n, int_n, nmi_n, busrq_n,
+    bus_t, bus_cyc, bus_last, bus_float, bus_resume
 );
 ```
 
@@ -189,3 +192,8 @@ and the inputs are not read. [debug_unit.md](debug_unit.md) has the details.
 `STROBE_1T` picks between the one-T-state strobes the test suite models
 (default, and what a synchronous FPGA memory wants) and holding MREQ/RD/WR
 across the cycle the way the real part drives an external bus.
+
+The `bus_*` outputs, and the parameters `LATE_READ` and `BUSREQ`, are for a
+core that drives a real Z80 bus through a pin stage.
+[bus_pins.md](bus_pins.md) has the details. A board that has no pin stage
+leaves the outputs unconnected and the parameters at 0.

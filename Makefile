@@ -38,7 +38,8 @@ gen $(GEN): tools/gen_z80.py tools/z80_enc.py
 boot sw/boot.hex: sw/boot.z80 tools/zasm.py
 	$(PYTHON) tools/zasm.py sw/boot.z80 -o sw/boot.hex --size 32768
 
-sim: sim/tb_sst.vvp sim/tb_soc.vvp sim/tb_irq.vvp sim/tb_ddr2ram.vvp \
+sim: sim/tb_sst.vvp sim/tb_sst_late.vvp sim/tb_busrq.vvp sim/tb_busrq_late.vvp \
+     sim/tb_soc.vvp sim/tb_irq.vvp sim/tb_ddr2ram.vvp \
      sim/tb_sdram.vvp sim/tb_sdram_soc.vvp sim/tb_romload.vvp \
      sim/tb_hdsk.vvp sim/tb_hdsk_soc.vvp \
      sim/tb_debug.vvp sim/tb_debug_div3.vvp sim/tb_debug_ddr2.vvp \
@@ -46,6 +47,22 @@ sim: sim/tb_sst.vvp sim/tb_soc.vvp sim/tb_irq.vvp sim/tb_ddr2ram.vvp \
 
 sim/tb_sst.vvp: sim/tb_sst.sv $(CORE) $(GEN)
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_sst.sv $(CORE)
+
+# The same bench with the core's LATE_READ on: the read byte is taken at the
+# end of T3, the way a real bus needs it, and the suite must still pass.
+sim/tb_sst_late.vvp: sim/tb_sst.sv $(CORE) $(GEN)
+	$(IVERILOG) -g2012 -I rtl/core -Ptb_sst.LATE_READ=1 -o $@ sim/tb_sst.sv $(CORE)
+
+# BUSREQ: a core that gives the bus away at random against one that never
+# does, on the same program; tb_busrq_late is the same with LATE_READ.
+sim/busrq_prog.hex: sim/busrq_prog.z80 tools/zasm.py
+	$(PYTHON) tools/zasm.py sim/busrq_prog.z80 -o $@ --size 32768
+
+sim/tb_busrq.vvp: sim/tb_busrq.sv $(CORE) $(GEN) sim/busrq_prog.hex
+	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_busrq.sv $(CORE)
+
+sim/tb_busrq_late.vvp: sim/tb_busrq.sv $(CORE) $(GEN) sim/busrq_prog.hex
+	$(IVERILOG) -g2012 -I rtl/core -Ptb_busrq.LATE_READ=1 -o $@ sim/tb_busrq.sv $(CORE)
 
 sim/tb_soc.vvp: sim/tb_soc.sv $(SOC) $(GEN) sw/boot.hex
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_soc.sv $(SOC)
@@ -217,6 +234,8 @@ romwbw-debug: sim/tb_romwbw_dbg.vvp sim/romwbw512k.hex
 test: sim
 	$(PYTHON) tools/test_zasm.py
 	$(VVP) sim/tb_irq.vvp
+	$(VVP) sim/tb_busrq.vvp
+	$(VVP) sim/tb_busrq_late.vvp
 	$(VVP) sim/tb_soc.vvp
 	$(VVP) sim/tb_ddr2ram.vvp
 	$(VVP) sim/tb_sdram.vvp
@@ -226,9 +245,14 @@ test: sim
 	$(VVP) sim/tb_hdsk_soc.vvp
 	$(MAKE) test-debug
 	$(PYTHON) tools/run_sst.py --all -n 20 --cycles
+	$(PYTHON) tools/run_sst.py --all -n 20 --cycles --bench tb_sst_late.vvp
 
 test-full: sim
 	$(PYTHON) tools/run_sst.py --all --cycles --chunk 40
+
+# The whole suite again, on the LATE_READ core.
+test-full-late: sim
+	$(PYTHON) tools/run_sst.py --all --cycles --chunk 40 --bench tb_sst_late.vvp
 
 # MULTIDRIVEN is a false positive here: Verilator counts each task that does a
 # non-blocking assignment as its own process, and every one of them is called
@@ -253,9 +277,9 @@ synth: $(GEN)
 # sw/boot.hex is committed, so it is deliberately not here: clean must not
 # dirty the tree.
 clean:
-	rm -f sim/*.vvp sim/vec.txt sim/res.txt sim/boot2k.hex sim/hdsk_test.hex sim/dbg_prog.hex
+	rm -f sim/*.vvp sim/vec.txt sim/res.txt sim/boot2k.hex sim/hdsk_test.hex sim/dbg_prog.hex sim/busrq_prog.hex
 	rm -f sim/romwbw*.hex sim/romwbw-fetched.rom sim/*.provenance.json sim/*.partial
 
 FORCE:
 
-.PHONY: all gen boot sim romwbw romwbw-debug test test-debug test-full test-romwbw512 lint synth clean FORCE
+.PHONY: all gen boot sim romwbw romwbw-debug test test-debug test-full test-full-late test-romwbw512 lint synth clean FORCE

@@ -117,6 +117,12 @@ RAMB36 again, "All user specified timing constraints are met" with WNS
 the +0.562 ns above -- two flip-flops on the data path will do that -- so keep
 reading the number rather than the verdict.
 
+The `LATE_READ` / `BUSREQ` change to `rtl/core/z80_core.sv` on 2026-11-06
+(both parameters off in this build, and new status outputs left unconnected)
+was rebuilt the same way: 0 DRC errors, no `REQP-1962`, 128 of 135 RAMB36,
+"All user specified timing constraints are met" with WNS +0.791 ns and WHS
++0.026 ns over 20724 endpoints. Built only; not run on the board.
+
 What is *not* fragile is the ROM's contents, and it is worth knowing before
 this section scares you off trying another image. A rebuild carrying RomWBW
 3.6.0 instead of 3.5.1 was made on 2026-09-22: clean `place_design`, no

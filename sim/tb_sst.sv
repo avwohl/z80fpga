@@ -17,7 +17,12 @@
 
 `timescale 1ns/1ps
 
-module tb_sst;
+module tb_sst #(
+    // 1: run the core with LATE_READ, which takes a read byte at the end of
+    // T3.  The pins do not change, so the same suite and the same bus traces
+    // apply; `make test-full-late` runs it.
+    parameter bit LATE_READ = 1'b0
+);
 
   logic clk = 0;
   logic rst_n = 0;
@@ -27,12 +32,14 @@ module tb_sst;
   logic mreq_n, iorq_n, rd_n, wr_n, m1_n, rfsh_n, halt_n, busak_n;
 
   logic [7:0] mem [0:65535];
+  logic [2:0] bus_cyc;
 
   logic  [7:0] io_in_val;
   logic  [7:0] io_addr_lo, io_addr_hi, io_val;
   logic  [1:0] io_dir;              // 0 none, 1 read, 2 write
 
   z80_core #(
+      .LATE_READ (LATE_READ),
       .UCODE_MEM ("rtl/core/z80_ucode.mem"),
       .DISP_MEM  ("rtl/core/z80_dispatch.mem")
   ) dut (
@@ -40,11 +47,14 @@ module tb_sst;
       .a (a), .din (din), .dout (dout),
       .mreq_n (mreq_n), .iorq_n (iorq_n), .rd_n (rd_n), .wr_n (wr_n),
       .m1_n (m1_n), .rfsh_n (rfsh_n), .halt_n (halt_n), .busak_n (busak_n),
-      .wait_n (1'b1), .int_n (1'b1), .nmi_n (1'b1), .busrq_n (1'b1)
+      .wait_n (1'b1), .int_n (1'b1), .nmi_n (1'b1), .busrq_n (1'b1),
+      .bus_cyc (bus_cyc)
   );
 
-  // combinational memory / port read, the model the suite assumes
-  assign din = (!iorq_n) ? io_in_val : mem[a];
+  // combinational memory / port read, the model the suite assumes.  With
+  // LATE_READ the port keeps its byte on the bus to the end of the I/O read
+  // (bus_cyc 4), as a real port does while /IORQ is low into T3.
+  assign din = (!iorq_n || (LATE_READ && bus_cyc == 3'd4)) ? io_in_val : mem[a];
 
   always @(posedge clk) begin
     if (!mreq_n && !wr_n) mem[a] <= dout;

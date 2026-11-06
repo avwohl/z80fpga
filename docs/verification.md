@@ -33,6 +33,7 @@ make sim
 python tools/run_sst.py --all -n 20 --cycles     # a 30-second sweep
 python tools/run_sst.py --all --cycles           # the whole thing
 python tools/run_sst.py "dd cb __ 06" -v --cycles  # one opcode, with detail
+python tools/run_sst.py --all --cycles --bench tb_sst_late.vvp   # LATE_READ
 ```
 
 Point `--suite` (or `Z80_TESTS`) at a checkout of the suite. `-n` limits the
@@ -167,12 +168,44 @@ The EI delay falls out of the design rather than being special-cased: IFF1 is
 read before the clock edge that EI's own action sets it on, so the boundary at
 the end of EI cannot accept an interrupt and the next one can.
 
+## LATE_READ
+
+`make test-full-late` runs the whole suite again on a core built with
+`LATE_READ = 1` (`sim/tb_sst_late.vvp`, the same bench with the parameter
+set). That core takes the byte of a memory read or an I/O read one T-state
+later, as [bus_pins.md](bus_pins.md) describes. The pins do not change, so the
+same bus traces apply. The bench's port keeps its byte on `din` to the end of
+the I/O read, as a real port does. `make test` runs the 20-case sweep on both
+cores.
+
+## BUSRQ
+
+`sim/tb_busrq.sv` runs `sim/busrq_prog.z80` on two cores at the same time.
+One has `busrq_n` tied high. The other is built with `BUSREQ = 1` and gets bus
+requests and wait states at random. On every T-state the bench checks that
+`busak_n` falls exactly after a last T-state that began with `busrq_n` low,
+that it rises exactly after a T-state that began with `busrq_n` high, that no
+strobe, `/M1` or `/RFSH` is active during the hold, and that `bus_t` counts.
+At the HALT, the two cores must have made the same bus cycles in the same
+order and must hold the same memory and registers. `sim/tb_busrq_late.vvp` is
+the same bench with `LATE_READ = 1` on both cores.
+
+Three wrong cores were tried, and each one fails the bench: one that samples
+`busrq_n` at the end of the last T-state instead of the start, one that
+leaves `/RFSH` active during the hold, and one that stops at any edge, not
+only at the end of an M-cycle.
+
 ## What is not covered
 
-- **BUSRQ.** `busak_n` currently just mirrors `busrq_n`; a real bus grant that
-  tri-states the pins at an M-cycle boundary is not implemented. `wait_n` is
-  no longer on this list — the off-chip memory benches above hold it low for a
-  variable number of T-states on every access.
+- **BUSRQ in the default build.** With `BUSREQ = 0`, `busak_n` mirrors
+  `busrq_n` and the core never stops. `BUSREQ = 1` implements the grant (see
+  above). The core does not drive tri-state pins in either build; a pin stage
+  does that from `bus_float`. `wait_n` is not on this list: the off-chip
+  memory benches above hold it low for a variable number of T-states on every
+  access.
+- **Interrupt acknowledge refresh.** The INT and NMI acknowledge cycles do not
+  put the refresh address on the bus or increment R. See
+  [bus_pins.md](bus_pins.md#known-differences-from-the-real-part).
 - **Hardware, on three boards.** The Nexys A7-100T has run: banner, bank
   check, console echo, and RomWBW and CP/M 2.2 on top of that. The Tang Nano
   20K reports `banked memory ok` through its configuration flash, its console

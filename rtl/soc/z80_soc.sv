@@ -234,6 +234,11 @@ module z80_soc #(
   logic        dbg_req, dbg_we, dbg_ack;
   logic [15:0] dbg_addr;
   logic  [7:0] dbg_wdata, dbg_rdata;
+  // The core's bus status is for a pin stage on a real Z80 bus
+  // (docs/bus_pins.md).  The SoC has none, so these go nowhere.
+  logic  [3:0] cpu_bus_t;
+  logic  [2:0] cpu_bus_cyc;
+  logic        cpu_bus_last, cpu_bus_float, cpu_bus_resume;
 
   z80_core #(
       .DEBUG_UNIT (DEBUG_UNIT),
@@ -245,6 +250,8 @@ module z80_soc #(
       .mreq_n (mreq_n), .iorq_n (iorq_n), .rd_n (rd_n), .wr_n (wr_n),
       .m1_n (m1_n), .rfsh_n (rfsh_n), .halt_n (halt_n), .busak_n (busak_n),
       .wait_n (wait_n), .int_n (1'b1), .nmi_n (1'b1), .busrq_n (1'b1),
+      .bus_t (cpu_bus_t), .bus_cyc (cpu_bus_cyc), .bus_last (cpu_bus_last),
+      .bus_float (cpu_bus_float), .bus_resume (cpu_bus_resume),
       .dbg_at_boundary (dbg_at_boundary), .dbg_pc (dbg_pc),
       .dbg_reg_sel (dbg_reg_sel), .dbg_reg_hi (dbg_reg_hi),
       .dbg_reg_rdata (dbg_reg_rdata),

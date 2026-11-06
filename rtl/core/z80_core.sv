@@ -20,6 +20,11 @@
 // them.
 //
 // One `clk_en` tick is one T-state; tie it high to run at the clock rate.
+//
+// LATE_READ and BUSREQ are for a core that drives a real Z80 bus, through a
+// pin stage that makes the half-T-state edges (docs/bus_pins.md).  Both are
+// off by default, and a build that leaves them off gets the same logic as
+// before they existed: every new term is then a constant.
 
 `ifndef Z80_CORE_SV
 `define Z80_CORE_SV
@@ -29,6 +34,17 @@ module z80_core #(
     // 1: build the hooks that rtl/soc/dbg_unit.sv uses (see the ports at the
     // end of the list).  0: they are constants and none of their logic exists.
     parameter bit DEBUG_UNIT = 1'b0,
+    // 1: a memory read or an I/O read takes its byte at the end of T3, not at
+    // the end of T2.  A real Z80 samples those at the falling edge in the
+    // middle of T3; the pin stage captures the byte there and holds it on
+    // `din` until the end of T3.  Opcode fetches and the interrupt vector are
+    // still taken at the end of T2, as the real part takes them.
+    parameter bit LATE_READ = 1'b0,
+    // 1: BUSRQ works.  The core samples busrq_n on each T-state edge, stops at
+    // the end of an M-cycle whose last T-state began with busrq_n low, raises
+    // bus_float and lowers busak_n until busrq_n is high again.  0: busak_n
+    // follows busrq_n and the core never stops, as before.
+    parameter bit BUSREQ = 1'b0,
     parameter     UCODE_MEM = "z80_ucode.mem",
     parameter     DISP_MEM  = "z80_dispatch.mem"
 ) (
@@ -53,6 +69,22 @@ module z80_core #(
     input  logic        int_n,
     input  logic        nmi_n,
     input  logic        busrq_n,
+
+    // Bus status, for a pin stage.  The core's own strobes change on whole
+    // T-states; a pin stage reads these to make the edges the real part makes
+    // in the middle of a T-state.  Leave them unconnected otherwise.
+    //
+    // bus_t is the T-state of the current M-cycle, 1 for T1; it stays at 2
+    // through wait states in a memory cycle and at 3 in an I/O cycle or an
+    // interrupt acknowledge.  bus_cyc is one of the BCYC_* codes below.
+    // bus_last is high in the last T-state of the M-cycle.  bus_float is high
+    // while the bus is given away under BUSRQ, and bus_resume is high in the
+    // last T-state of that, whose rising edge saw busrq_n high again.
+    output logic  [3:0] bus_t,
+    output logic  [2:0] bus_cyc,
+    output logic        bus_last,
+    output logic        bus_float,
+    output logic        bus_resume,
 
     // Debug unit hooks, meaningful only when DEBUG_UNIT.  A bench or a board
     // that has no debug unit leaves all of them unconnected: the outputs are
@@ -130,6 +162,16 @@ module z80_core #(
   localparam logic [2:0] PH_ACK  = 3'd4;   // INT acknowledge
   localparam logic [2:0] PH_NMIA = 3'd5;   // NMI acknowledge
 
+  // bus_cyc codes
+  localparam logic [2:0] BCYC_INT  = 3'd0;  // internal T-states, no strobe
+  localparam logic [2:0] BCYC_M1   = 3'd1;  // opcode fetch, with refresh
+  localparam logic [2:0] BCYC_MR   = 3'd2;  // memory read
+  localparam logic [2:0] BCYC_MW   = 3'd3;  // memory write
+  localparam logic [2:0] BCYC_IOR  = 3'd4;  // I/O read
+  localparam logic [2:0] BCYC_IOW  = 3'd5;  // I/O write
+  localparam logic [2:0] BCYC_INTA = 3'd6;  // interrupt acknowledge
+  localparam logic [2:0] BCYC_NMIA = 3'd7;  // the NMI response cycle
+
   // ======================================================================
   // forward-declared combinational nets
   // ======================================================================
@@ -148,6 +190,16 @@ module z80_core #(
   logic  [7:0] q_x;      // Q, handed over on the fetch edge
   logic  [7:0] r_x;      // R, which the fetch bumps on that edge too
   logic [15:0] bc_x;     // BC, whose B the OUTx group decrements first
+  // LATE_READ: a read of 3 T-states (4 for I/O) now retires its byte on the
+  // same edge as the action that follows, so DIN and the register the byte
+  // goes to need the same treatment.  Of those registers, only W and Z are
+  // read by an action on that edge (JP, RET, IN A,(n), LD A,(nn) ...); the
+  // late-read run of the opcode suite is what shows the list is complete.
+  logic  [7:0] rdin_v;   // DIN as the action edge sees it
+  logic [15:0] rwz_v;    // WZ likewise, before wz_x adds the DD CB case
+
+  logic        clk_go;   // clk_en, unless BUSRQ holds the core at this edge
+  logic        stall, hold;
 
 
   assign uw_cur = urom[upc];
@@ -212,11 +264,11 @@ module z80_core #(
       DAT_E:    rd8 = rE;
       DAT_H:    rd8 = hl_star[15:8];
       DAT_L:    rd8 = hl_star[7:0];
-      DAT_DIN:  rd8 = rDIN;
+      DAT_DIN:  rd8 = rdin_v;
       DAT_A:    rd8 = rA;
       DAT_F:    rd8 = rF;
-      DAT_W:    rd8 = rWZ[15:8];
-      DAT_Z:    rd8 = rWZ[7:0];
+      DAT_W:    rd8 = rwz_v[15:8];
+      DAT_Z:    rd8 = rwz_v[7:0];
       DAT_I:    rd8 = rI;
       DAT_R:    rd8 = r_x;
       DAT_SPH:  rd8 = rSP[15:8];
@@ -234,7 +286,9 @@ module z80_core #(
   // ALU
   // ======================================================================
   assign uw_alu = do_enter ? uw_ent : uw_cur;
-  assign alu_b  = rd8(resolve(`UF(uw_alu, DS)));
+  // always_comb, for the reason given at nx_go: rd8 and resolve read rdin_v,
+  // rwz_v and ir_x, which are not arguments.
+  always_comb alu_b = rd8(resolve(`UF(uw_alu, DS)));
 
   z80_alu u_alu (
       .op   (`UF(uw_alu, ALU)),
@@ -244,7 +298,7 @@ module z80_core #(
       .q    (q_x),
       .bsel (ir_x[5:3]),
       .iff2 (iff2),
-      .wreg (rWZ[15:8]),
+      .wreg (rwz_v[15:8]),
       .res  (alu_res),
       .fo   (alu_fo)
   );
@@ -272,7 +326,7 @@ module z80_core #(
       ASRC_DE:   asrc_val = {rD, rE};
       ASRC_WZ:   asrc_val = wz_x;
       ASRC_RP:   asrc_val = rp_val;
-      ASRC_AZ:   asrc_val = {rA, rWZ[7:0]};
+      ASRC_AZ:   asrc_val = {rA, rwz_v[7:0]};
       ASRC_HLR:  asrc_val = {rH, rL};
       ASRC_DER:  asrc_val = {rD, rE};
       ASRC_BCR:  asrc_val = bc_x;
@@ -321,13 +375,90 @@ module z80_core #(
   assign strobe_t = (is_io || phase == PH_ACK || phase == PH_NMIA) ? 4'd3 : 4'd2;
 
   logic waiting, latch_now, cyc_done, has_bus;
+  logic late_cyc;
+  logic [3:0] latch_t;
   assign has_bus   = (tlen != 4'd0);
   assign waiting   = has_bus && (tcnt == strobe_t) && !wait_n &&
                      (phase != PH_NMIA) && (in_exec ? (cur_bus != BUS_INT) : 1'b1);
-  assign latch_now = clk_en && has_bus && !waiting && (tcnt == strobe_t) &&
+  // LATE_READ: the reads that the real part samples at the T3 falling edge
+  // (memory read, I/O read, and the two DD CB bytes after the prefixes, which
+  // are memory reads) take their byte one T-state after the strobe T-state.
+  // There are no wait states in that T-state, so `waiting` is low there.
+  assign late_cyc  = LATE_READ && has_bus &&
+                     ((phase == PH_XD) || (phase == PH_XOP) ||
+                      (in_exec && (cur_bus == BUS_MR || cur_bus == BUS_IOR)));
+  assign latch_t   = late_cyc ? strobe_t + 4'd1 : strobe_t;
+  assign latch_now = clk_go && has_bus && !waiting && (tcnt == latch_t) &&
                      is_read && (!in_exec || cur_bus == BUS_MR ||
                                  cur_bus == BUS_IOR);
   assign cyc_done  = !has_bus || ((tcnt >= tlen) && !waiting);
+
+  // A late read that ends its M-cycle hands its byte to the action on the
+  // same edge.  late_cyc is in the term so that an opcode fetch, whose byte
+  // the action never sees on that edge, keeps the plain register.
+  logic        pd_late;
+  logic  [4:0] pd_sel;
+  assign pd_late = LATE_READ && latch_now && in_exec;
+  always_comb pd_sel = resolve(`UF(uw_cur, PD));          // as alu_b
+  assign rdin_v  = (LATE_READ && latch_now && late_cyc) ? din : rDIN;
+  assign rwz_v   = !pd_late             ? rWZ
+                 : (pd_sel == DAT_Z)    ? {rWZ[15:8], din}
+                 : (pd_sel == DAT_W)    ? {din, rWZ[7:0]}
+                 :                        rWZ;
+
+  // ======================================================================
+  // BUSRQ
+  // ======================================================================
+  // busrq_s is busrq_n as the last T-state edge saw it.  At the edge that
+  // ends an M-cycle, busrq_s is thus the value from the edge that began the
+  // M-cycle's last T-state, which is when the real part samples it.  A stall
+  // does nothing on that edge: no action, no new bus cycle, no T-state count.
+  // The core stays in the last T-state of the M-cycle it finished, with
+  // cyc_done high, and does the edge it skipped on the first edge after
+  // busrq_s goes high again.
+  generate
+    if (BUSREQ) begin : g_busrq
+      logic busrq_s;
+      always_ff @(posedge clk) begin
+        if (!rst_n) begin
+          busrq_s <= 1'b1;
+          hold    <= 1'b0;
+        end else if (clk_en) begin
+          busrq_s <= busrq_n;
+          hold    <= stall;
+        end
+      end
+      assign stall      = cyc_done && !busrq_s;
+      assign bus_resume = hold && busrq_s;
+    end else begin : g_nobusrq
+      assign stall      = 1'b0;
+      assign hold       = 1'b0;
+      assign bus_resume = 1'b0;
+    end
+  endgenerate
+  assign clk_go    = clk_en && !stall;
+  assign bus_float = hold;
+
+  // ======================================================================
+  // bus status
+  // ======================================================================
+  assign bus_t    = tcnt;
+  assign bus_last = has_bus && cyc_done;
+  always_comb begin
+    case (phase)
+      PH_M1:          bus_cyc = BCYC_M1;
+      PH_XD, PH_XOP:  bus_cyc = BCYC_MR;
+      PH_ACK:         bus_cyc = BCYC_INTA;
+      PH_NMIA:        bus_cyc = BCYC_NMIA;
+      default: case (cur_bus)
+                 BUS_MR:  bus_cyc = BCYC_MR;
+                 BUS_MW:  bus_cyc = BCYC_MW;
+                 BUS_IOR: bus_cyc = BCYC_IOR;
+                 BUS_IOW: bus_cyc = BCYC_IOW;
+                 default: bus_cyc = BCYC_INT;
+               endcase
+    endcase
+  end
 
   // ======================================================================
   // bus pins
@@ -337,9 +468,11 @@ module z80_core #(
   assign mem_cycle = has_bus && (!in_exec ? (phase != PH_ACK && phase != PH_NMIA)
                                           : (cur_bus == BUS_MR || cur_bus == BUS_MW));
   assign io_cycle  = is_io || (phase == PH_ACK);
+  // With LATE_READ and the strobes held, a read holds them to the end of the
+  // T-state that takes the byte.  The single-T-state form stays the suite's.
   assign strobe_win = STROBE_1T
                     ? (tcnt == strobe_t)
-                    : ((tcnt >= (io_cycle ? 4'd2 : 4'd1)) && (tcnt <= strobe_t));
+                    : ((tcnt >= (io_cycle ? 4'd2 : 4'd1)) && (tcnt <= latch_t));
 
   always_comb begin
     if (is_m1)
@@ -351,17 +484,20 @@ module z80_core #(
       a = abus;
   end
 
-  assign m1_n    = !((is_m1 && tcnt <= 2) || phase == PH_ACK || phase == PH_NMIA);
-  assign rfsh_n  = !(is_m1 && tcnt >= 3);
+  // While the bus is given away, /M1 and /RFSH are inactive too: the real
+  // part does not float them, but it does not assert them either.
+  assign m1_n    = !(((is_m1 && tcnt <= 2) || phase == PH_ACK || phase == PH_NMIA)
+                     && !hold);
+  assign rfsh_n  = !(is_m1 && tcnt >= 3 && !hold);
   assign halt_n  = !halted;
-  assign busak_n = busrq_n;
-  assign dout    = rd8(resolve(`UF(uw_cur, WSRC)));
+  assign busak_n = BUSREQ ? !hold : busrq_n;
+  always_comb dout = rd8(resolve(`UF(uw_cur, WSRC)));     // as alu_b
 
-  assign mreq_n = !(strobe_win && mem_cycle);
-  assign iorq_n = !(strobe_win && io_cycle);
+  assign mreq_n = !(strobe_win && mem_cycle && !hold);
+  assign iorq_n = !(strobe_win && io_cycle && !hold);
   assign rd_n   = !(strobe_win && is_read && has_bus && (phase != PH_NMIA) &&
-                    (!in_exec || cur_bus == BUS_MR || cur_bus == BUS_IOR));
-  assign wr_n   = !(strobe_win && is_write);
+                    (!in_exec || cur_bus == BUS_MR || cur_bus == BUS_IOR) && !hold);
+  assign wr_n   = !(strobe_win && is_write && !hold);
 
 
   // ======================================================================
@@ -511,7 +647,7 @@ module z80_core #(
                      ? opcode : ir;
   assign pc_x      = (cyc_done && ((is_m1 && !halted) || phase == PH_XD ||
                                    phase == PH_XOP)) ? rPC + 16'd1 : rPC;
-  assign wz_x      = (cyc_done && phase == PH_XOP) ? ddcb_addr : rWZ;
+  assign wz_x      = (cyc_done && phase == PH_XOP) ? ddcb_addr : rwz_v;
   assign q_x       = (cyc_done && is_m1) ? rQ : qPrev;
   assign r_x       = (cyc_done && is_m1) ? {rR[7], rR[6:0] + 7'd1} : rR;
   // OUTI/OUTD put the *decremented* B on the port address
@@ -554,7 +690,7 @@ module z80_core #(
   end
 
   always_ff @(posedge clk) begin
-    if (clk_en && latch_now) disp_entry <= drom[disp_sel];
+    if (latch_now) disp_entry <= drom[disp_sel];
   end
 
   assign is_prefix_byte = is_m1 && (tab_sel == 2'd0) && !halted &&
@@ -579,7 +715,7 @@ module z80_core #(
 
   logic [15:0] sext_din;
   logic  [7:0] rep_pch;
-  assign sext_din = {{8{rDIN[7]}}, rDIN};
+  assign sext_din = {{8{rdin_v[7]}}, rdin_v};
   assign rep_pch  = rPC[15:8] - {7'd0, (rPC[7:0] < 8'd2)};
 
   // A repeating block I/O instruction corrects H and P/V again, using the
@@ -594,9 +730,9 @@ module z80_core #(
 
   logic [7:0] blk_n, cp_n2;
   logic       cp_h;
-  assign blk_n  = rDIN + rA;
-  assign cp_res = rA - rDIN;
-  assign cp_h   = (rA[3:0] < rDIN[3:0]);
+  assign blk_n  = rdin_v + rA;
+  assign cp_res = rA - rdin_v;
+  assign cp_h   = (rA[3:0] < rdin_v[3:0]);
   assign cp_n2  = cp_res - {7'd0, cp_h};
 
   logic [8:0] io_k;
@@ -607,11 +743,11 @@ module z80_core #(
   // INI/IND add C+-1; OUTI/OUTD add L after the pointer has moved
   assign io_l = io_is_in ? (io_dec ? rC - 8'd1 : rC + 8'd1)
                          : (io_dec ? rL - 8'd1 : rL + 8'd1);
-  assign io_k = {1'b0, rDIN} + {1'b0, io_l};
+  assign io_k = {1'b0, rdin_v} + {1'b0, io_l};
 
   function automatic logic [7:0] blk_io_flags(input logic [7:0] bv);
     blk_io_flags = {bv[7], bv == 8'h00, bv[5], io_k[8], bv[3],
-                    ~^({5'd0, io_k[2:0]} ^ bv), rDIN[7], io_k[8]};
+                    ~^({5'd0, io_k[2:0]} ^ bv), rdin_v[7], io_k[8]};
   endfunction
 
   // ======================================================================
@@ -632,9 +768,9 @@ module z80_core #(
       wr8_en  = 1'b1;
       wr8_sel = dbg_wr_dat;
       wr8_val = dbg_wr_data;
-    end else if (latch_now && in_exec) begin
+    end else if (!LATE_READ && latch_now && in_exec) begin
       wr8_en  = 1'b1;
-      wr8_sel = resolve(`UF(uw_cur, PD));
+      wr8_sel = pd_sel;
     end else if (do_enter && (`UF(uw_ent, DD) != DAT_NONE)) begin
       wr8_en  = 1'b1;
       wr8_sel = resolve(`UF(uw_ent, DD));
@@ -732,8 +868,8 @@ module z80_core #(
           rWZ <= rPC + sext_din;
         end
         EOP_DISP:   rWZ <= hl_star + sext_din;
-        EOP_HL_WZ:  wr_hl(rWZ);
-        EOP_PC_WZ:  rPC <= rWZ;
+        EOP_HL_WZ:  wr_hl(rwz_v);
+        EOP_PC_WZ:  rPC <= rwz_v;
         EOP_PC_HL:  rPC <= hl_star;
         EOP_SP_HL:  rSP <= hl_star;
         EOP_PC_RST: begin
@@ -756,10 +892,10 @@ module z80_core #(
         EOP_CPI, EOP_CPD: begin
           if (`UF(uw_ent, EOP) == EOP_CPI) begin
             {rH, rL} <= {rH, rL} + 16'd1;
-            rWZ      <= rWZ + 16'd1;
+            rWZ      <= rwz_v + 16'd1;
           end else begin
             {rH, rL} <= {rH, rL} - 16'd1;
-            rWZ      <= rWZ - 16'd1;
+            rWZ      <= rwz_v - 16'd1;
           end
           {rB, rC} <= bc_dec;
           fnew   = {cp_res[7], cp_res == 8'h00, cp_n2[1], cp_h, cp_n2[3],
@@ -917,11 +1053,17 @@ module z80_core #(
       // follows in program order.  Without a unit it is the line inside the
       // block, where it always was, so that the netlist of every build that has
       // no unit is the one it was before.
+      //
+      // LATE_READ gives the read byte a write port of its own, because it can
+      // land on the same edge as the action's.  It comes first, so that the
+      // action wins if both name one register, as it did when the byte came
+      // a T-state earlier.
+      if (pd_late) wreg(pd_sel, din);
       if (DEBUG_UNIT) begin
-        if (wr8_en && (clk_en || dbg_wr_go)) wreg(wr8_sel, wr8_val);
+        if (wr8_en && (clk_go || dbg_wr_go)) wreg(wr8_sel, wr8_val);
       end
 
-      if (clk_en) begin
+      if (clk_go) begin
         // The refresh address stays on the pins through any internal cycle
         // that follows the fetch, which is what the bus traces show.
         if (is_m1 && (tcnt == strobe_t) && !waiting) abus <= {rI, rR};

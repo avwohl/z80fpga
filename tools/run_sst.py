@@ -132,9 +132,10 @@ def compare(test, res, check_cycles):
     return bad
 
 
-def run(names, suite, limit, check_cycles, verbose, build_dir, chunk=250):
+def run(names, suite, limit, check_cycles, verbose, build_dir, chunk=250,
+        bench="tb_sst.vvp"):
     """Batch many opcode files into one bench run; launching vvp dominates."""
-    vvp = os.path.join(build_dir, "tb_sst.vvp")
+    vvp = os.path.join(build_dir, bench)
     vec = os.path.join(build_dir, "vec.txt")
     res = os.path.join(build_dir, "res.txt")
     total_fail = total = 0
@@ -202,6 +203,9 @@ def main():
     ap.add_argument("--build", default=os.path.join(ROOT, "sim"))
     ap.add_argument("--chunk", type=int, default=250,
                     help="opcode files per bench invocation")
+    ap.add_argument("--bench", default="tb_sst.vvp",
+                    help="the compiled bench in --build, for example "
+                         "tb_sst_late.vvp for the LATE_READ core")
     a = ap.parse_args()
 
     if a.all:
@@ -216,7 +220,7 @@ def main():
     if not names:
         ap.error("name some opcodes, or pass --all")
     sys.exit(run(names, a.suite, a.limit, a.cycles, a.verbose, a.build,
-                 a.chunk))
+                 a.chunk, a.bench))
 
 
 if __name__ == "__main__":

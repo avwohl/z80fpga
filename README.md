@@ -85,6 +85,7 @@ never run, and the [Qomu](boards/qomu/) does not fit.
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md) - how the microcode engine works, and the core's ports
+- [docs/bus_pins.md](docs/bus_pins.md) - driving a real Z80 bus: late read data, BUSRQ, and the bus status outputs for a pin stage
 - [docs/verification.md](docs/verification.md) - how the core is tested, interrupts included
 - [docs/boards.md](docs/boards.md) - each board, what has run on hardware, and the third-party files
 - [docs/porting.md](docs/porting.md) - what a new board costs

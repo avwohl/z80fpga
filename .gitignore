@@ -2,6 +2,7 @@
 sim/*.vvp
 sim/romwbw*.hex
 sim/hdsk_test.hex
+sim/busrq_prog.hex
 sim/boot2k.hex
 sim/romwbw-fetched.rom
 boards/*/*/romwbw*.hex
