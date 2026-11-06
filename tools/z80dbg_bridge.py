@@ -763,10 +763,14 @@ class Bridge(object):
             return self.monitor_wait_program(words[1:])
         if words[0] == "status":
             st = self.u.status()
-            pc = self.u.read_reg(R_PC)
-            cpu_bank = self.u.read_reg(R_BANK) & 255
-            return ("%s pc=%04X cpu-bank=%02X view=%s break-bank=%s breakpoints=%d\n%s" % (
-                "stopped" if st.stopped else "running", pc, cpu_bank,
+            # The unit reads registers only at a stop.
+            if st.stopped:
+                where = "pc=%04X cpu-bank=%02X" % (self.u.read_reg(R_PC),
+                                                   self.u.read_reg(R_BANK) & 255)
+            else:
+                where = "pc=? cpu-bank=?"
+            return ("%s %s view=%s break-bank=%s breakpoints=%d\n%s" % (
+                "stopped" if st.stopped else "running", where,
                 "cur" if self.view_bank is None else "%02X" % self.view_bank,
                 "off" if self.break_bank is None else "%02X" % self.break_bank,
                 sum(1 for s in self.slots if s and s[1] != "rule"),
@@ -776,7 +780,16 @@ class Bridge(object):
     def handle(self, client, p):
         """Answer one packet.  Returns False when the debugger has gone."""
         if p == "?":
-            client.send("T05")
+            # A debugger that asks why the target stopped is attaching, and
+            # reads the registers next, which the unit gives only at a stop.
+            # A board whose core runs from reset (DBG_HALT_ON_RESET = 0) is
+            # running here, so stop it, as gdbserver stops a process it
+            # attaches to.  D continues it.
+            if self.u.status().stopped:
+                client.send("T05")
+            else:
+                self.u.halt()
+                client.send("T02")
         elif p == "g":
             client.send("".join(hex16le(self.u.read_reg(r)) for r in GDB_REGS))
         elif p[0] == "G":
@@ -900,6 +913,16 @@ class Bridge(object):
             kind, p = client.read_packet(None)
             if kind == "closed":
                 return
+            if kind == "int":
+                # ^C outside a continue: stop a running core.  A stopped one
+                # has nothing new to report; the debugger had that stop.
+                try:
+                    if not self.u.status().stopped:
+                        self.u.halt()
+                        client.send("T02")
+                except UnitError as e:
+                    sys.stderr.write("z80dbg bridge: %s\n" % e)
+                continue
             if kind == "pkt":
                 try:
                     if not self.handle(client, p):

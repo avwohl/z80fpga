@@ -9,6 +9,24 @@
 
 : "${OSS_CAD_ROOT:=/c/temp/tools/oss-cad-suite}"
 export OSS_CAD_ROOT
+
+# The suite ships its own python3 (in lib/ on Windows), and once the suite is
+# on PATH that python3 shadows yours.  Keep the Makefile on yours: the pip
+# packages (pyserial, ftd2xx, um80) are installed there, and the suite's
+# Windows python3 is a MinGW 3.11 whose timed socket calls fail with "unable
+# to select on socket" once a handle value passes FD_SETSIZE -- which made
+# tools/test_z80dbg_bridge.py fail or pass depending on handle numbers.
+if [ -z "${PYTHON:-}" ]; then
+    for _py in python3 python; do
+        _p=$(command -v "$_py" 2>/dev/null) || continue
+        case "$_p" in "$OSS_CAD_ROOT"/*) continue ;; esac
+        "$_p" -c "" >/dev/null 2>&1 || continue   # the Store's python3 stub
+        export PYTHON="$_p"
+        break
+    done
+    unset _py _p
+fi
+
 export PATH="$OSS_CAD_ROOT/bin:$OSS_CAD_ROOT/lib:$PATH"
 [ -f "$OSS_CAD_ROOT/etc/cacert.pem" ] && export SSL_CERT_FILE="$OSS_CAD_ROOT/etc/cacert.pem"
 

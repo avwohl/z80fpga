@@ -9,6 +9,28 @@ link). Everything that runs without Vivado passes on the Mac: `make test`,
 cosim), `make lint`, and a read-only IDCODE over JTAG on the board. Nothing
 has run on the board with the link, because only Vivado builds the bitstream.
 
+**Done on Windows, 2026-11-06** (a new disk, Vivado 2026.1): steps 1 to 5,
+and `MANUAL_CHECKS.md` items 6 to 11. The results are in `docs/debug_unit.md`
+(What is measured). The build needs the BASIC license tier (`CLAUDE.md`, Board
+builds). The bitstream with the unit is
+`boards/nexys_a7_100t/romwbw/build/dbg_jtag/romwbw_soc.bit`, RomWBW 3.6.0.
+
+Found and fixed on the way:
+
+- `tools/ossenv.sh` let the OSS CAD Suite's own python3 (MinGW 3.11) shadow
+  the user's, and that Python fails timed socket calls once a handle value
+  passes FD_SETSIZE. `make test` failed in the bridge test on that alone.
+- The d2xx back end opened index 0, which on Windows 11 is channel B (the
+  UART). It now finds channel A by name.
+- The bridge assumed a stopped core at attach. With `DBG_HALT_ON_RESET` at 0
+  (the Nexys build), GDB could not attach at all. `?` and an idle ^C now stop
+  a running core.
+- The Nexys console uses RTS/CTS; a script that drops RTS sees almost
+  nothing (`docs/boards.md`).
+
+Still open: item 12 (udb80 with a CP/M program on the board's disk), and
+step 6 below.
+
 On the Windows machine:
 
 1. `git pull`, then build with the link:
@@ -28,7 +50,7 @@ On the Windows machine:
    then GDB or udb80 as `MANUAL_CHECKS.md` says (Debug unit on the Nexys
    A7-100T, items 6 to 12; no adapter now). GDB needs the Z80 target, and
    udb80 needs um80 0.4.2 or later.
-6. Copy `build/romwbw_soc.bit` to the Mac too: there `openFPGALoader -b
+6. Copy `build/dbg_jtag/romwbw_soc.bit` to the Mac too: there `openFPGALoader -b
    nexys_a7_100 romwbw_soc.bit` loads it, and `--jtag` uses the pyftdi back end
    (`docs/macos.md`).
 

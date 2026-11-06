@@ -6,9 +6,10 @@ the item. If the run found a fault, the fix goes in `CHANGELOG.md`.
 
 ## Debug unit on the Nexys A7-100T
 
-The simulation of the debug unit passes (`make test-debug`). Nobody has built
-the unit for the board or run the unit on the board. This check needs Vivado
-(about 25 minutes per build) and the board. It needs no adapter: the unit
+The simulation of the debug unit passes (`make test-debug`). On 2026-11-06,
+Windows 11 and Vivado 2026.1 did items 1 to 11 with the JTAG link
+(`docs/debug_unit.md`, What is measured). Item 12 is not done. This check needs
+Vivado (about 10 to 25 minutes per build) and the board. It needs no adapter: the unit
 speaks JTAG over the USB cable of the board.
 
 1. Build the default board once, with no environment variable:
@@ -47,8 +48,7 @@ speaks JTAG over the USB cable of the board.
    `pip install pyftdi`). Right: the bridge prints `listening on
    127.0.0.1:1234` and does not stop. Wrong: a timeout from the unit. Check
    that the bitstream has the unit, and try `--jtag-freq 1e6`. On Windows, run
-   the same with `--jtag --jtag-backend d2xx` (`pip install ftd2xx`). The
-   `d2xx` back end is not tried on any device. For the serial link
+   the same with `--jtag --jtag-backend d2xx` (`pip install ftd2xx`). For the serial link
    (`Z80_DEBUG_LINK=uart`): adapter TX to JA pin 1, adapter RX to JA pin 2,
    GND to JA pin 5, and `--serial DEVICE`.
 8. Run GDB (build with `--target=z80-unknown-elf`, see `docs/debug_unit.md`):

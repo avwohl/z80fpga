@@ -196,8 +196,9 @@ FPGA to host, captured at CAPTURE-DR and shifted out in the same scan:
   Pmod JA with `romwbw_dbg.xdc`, and defines `WITH_DEBUG_UART`. Any other
   value of `Z80_DEBUG_LINK` stops the script with an error.
 - `romwbw_dbg_jtag.xdc` has a `create_clock` of 33.333 ns on TCK and an
-  asynchronous clock group against `ui_clk`. No Vivado has run the file. The
-  names in the file are not checked.
+  asynchronous clock group against `ui_clk`. Vivado 2026.1 read the file on
+  2026-11-06, and both names are correct: `jtag_tck` is on
+  `u_dbg_bscan/u_bscan/TCK`, and `ui_clk` gives the clock `clk_pll_i`.
 
 ### Bridge options
 
@@ -209,7 +210,9 @@ python3 tools/z80dbg_bridge.py --vvp-jtag sim/tb_debug_cosim_jtag.vvp --listen 1
 - `--jtag`: the board, through an FTDI chip.
 - `--jtag-backend pyftdi|d2xx`: the FTDI library. The default is `pyftdi`.
 - `--jtag-url`: a pyftdi URL (default `ftdi://0x0403:0x6010/1`, channel A of
-  the Digilent FT2232) or, for `d2xx`, a device index (default 0).
+  the Digilent FT2232) or, for `d2xx`, a device index. Without an index, `d2xx`
+  uses the first device whose name ends in A, which is channel A. The driver
+  sets the index order: on Windows 11, index 0 was channel B.
 - `--jtag-freq`: TCK in Hz. The default is 6e6. The maximum is 30e6. The driver rounds the clock down, so TCK never exceeds this value.
 - `--vvp-jtag FILE`: the JTAG cosim.
 
@@ -228,7 +231,10 @@ the console and the debugger work at the same time on the same cable.
 - Linux: `pip install pyftdi`, and then `--jtag`. The user needs access to the
   USB device (a udev rule). Not tried.
 - Windows: `--jtag --jtag-backend d2xx` (`pip install ftd2xx`). The D2XX driver
-  is the driver that Vivado uses. Not tried.
+  is the driver that Vivado uses. The cable drivers of Vivado install the D2XX
+  driver: as administrator, go to `data\xicom\cable_drivers\nt64` in the
+  Vivado installation and run `install_drivers_wrapper.bat` there. Tried on
+  Windows 11 (see "What is measured").
 - One program at a time holds channel A. Close the hardware manager of Vivado
   (or `openFPGALoader`) before the bridge starts. If you load a new bitstream,
   start the bridge after the load.
@@ -258,8 +264,8 @@ The unit clock is 1 MHz. TCK is 73 kHz, which keeps the ratio of the board
   mailbox is dropped when `rst_n` is low.
 - `tools/test_z80dbg_jtag.py`: 195 checks of the Python side with a model of
   the FPGA, and fake FTDI objects. No RTL, no board.
-- `tools/test_z80dbg_bridge.py`: the same 253 checks over each link, 506 in
-  all.
+- `tools/test_z80dbg_bridge.py`: the same 269 checks over each link, 538 in
+  all. The checks include an attach to a running core.
 - GDB 18.1 over `--vvp-jtag`: `monitor wait-program sha256 128 HEX64` and
   `continue` gave `Program received signal SIGTRAP` at `start ()`. udb80 0.4.2
   `--wait-program` stopped at 0100H, and `break wp.mac:3`, `continue` and `bt`
@@ -267,18 +273,35 @@ The unit clock is 1 MHz. TCK is 73 kHz, which keeps the ratio of the board
 - On the real Nexys A7 (2026-11-05, macOS 27, pyftdi): IDCODE 0x13631093 at
   6 MHz and at 30 MHz. A bitstream with no unit answers a USER3 scan like a
   1-bit BYPASS register.
+- Vivado 2026.1 build with the JTAG link (2026-11-06): 0 DRC errors, no
+  `REQP-1962`, 128 of 135 RAMB36. All timing constraints are met, with WNS
+  +0.254 ns and WHS +0.060 ns. In the `jtag_tck` domain, the worst hold slack
+  is +0.160 ns and the worst setup slack is +30.395 ns.
+- `report_cdc` of that build: 1 Critical, CDC-4 "multi-bit unknown CDC
+  circuitry" from `f_data_reg[7:0]` (unit clock) to `sr_reg[7:0]` (TCK). The
+  handshake holds that byte still, so that Critical item is not a fault. From TCK to
+  the unit clock, `h_data_reg` to `rx_data_reg` gives CDC-15 warnings: a
+  structure with a clock enable. The toggle synchronizers are CDC-3, and
+  Vivado sees `ASYNC_REG`.
+- On the real Nexys A7 (2026-11-06, Windows 11, d2xx, that bitstream): IDCODE
+  and USER3 answers at 6 MHz and at 30 MHz. GDB 18.1 (MSYS2 `gdb-multiarch`)
+  through the bridge stopped the running RomWBW at attach, read the 13
+  registers, did 3 `stepi`, and stopped at a `break`. `continue` with ^C
+  worked 3 times. A memory write above 8000H read back, and `monitor bank`
+  showed other banks. The console kept its echo after each stop.
+- A read of the whole ROM bank 00H through `monitor bank 00` and GDB `dump`:
+  32768 bytes, all equal to the ROM image, at 30 MHz and at 6 MHz. Each read
+  took about 2.5 seconds.
 
 ### What is not measured
 
-- The clock-crossing flops carry `ASYNC_REG`, but the xdc has no `set_max_delay -datapath_only` for the data buses, and the hold paths from the BSCANE2 outputs to the buffered TCK are not checked. After the first Vivado build, read `report_cdc` and these paths, and test at 30 MHz.
-- No Vivado has built the JTAG link. The `BSCANE2` wrapper, the clock
-  constraints and the timing are not checked. The link in a real FPGA has not
-  answered a command.
-- The `d2xx` back end has not touched a device. Linux and Windows are not
-  tried.
-- TCK above 6 MHz has run only for the IDCODE read.
-- The LUT cost of the JTAG link is not measured. The "Cost" section is for the
-  serial link.
+- Vivado does not time the paths from the `BSCANE2` outputs (`SEL`, `SHIFT`,
+  `CAPTURE`, `UPDATE`, `RESET`, `TDI`) to the TCK flip-flops, or the path from
+  `sr_reg[0]` to `TDO`. These paths have no start clock. The board passes at
+  6 MHz and at 30 MHz, but a different placement can change the margin.
+- The xdc has no `set_max_delay -datapath_only` for the data buses.
+- The pyftdi back end on Linux is not tried.
+- udb80 on the board is not tried (`MANUAL_CHECKS.md`, item 12).
 
 ## The GDB bridge
 
@@ -309,6 +332,17 @@ words of romwbw_emu:
   romwbw_emu. The bridge is stricter on input: `sha256` takes exactly a
   decimal length and 64 hex digits, with nothing after them.
 - `monitor status` shows the state of the unit and of the wait-program rule.
+  The unit reads registers only at a stop. For a core that runs, the PC and the
+  bank show as `?`.
+
+The core can run when the debugger attaches. An example is a board with
+`DBG_HALT_ON_RESET` at 0, or a core that a previous `detach` let go. GDB then
+sends `?` and reads the registers. So the bridge stops a running core at `?`
+and replies `T02`, as gdbserver stops a process at attach. A core that is
+already stopped gives `T05`.
+
+A ^C (03H) outside a `continue` also stops a
+running core, with the reply `T02`. `detach` lets the core run again.
 
 ### Find a CP/M program: wait-program
 
@@ -465,8 +499,20 @@ adds 535 LUTs and 369 flip-flops (4677 LUTs and 1417 flip-flops, against 4142
 and 1048 with the parameter at 0). The unit adds no RAMB tile and no LUT RAM.
 
 The mapping of the same logic varies from run to run by about 80 LUTs, so
-treat the numbers as an estimate of 550 LUTs. A Vivado run gives the real
-number.
+treat the numbers as an estimate of 550 LUTs.
+
+Vivado 2026.1 gives the real number for the Nexys RomWBW build with the JTAG
+link (2026-11-06). In the hierarchical utilization report, `u_dbg` has 410
+LUTs and 353 flip-flops. The JTAG link inside `u_dbg` has 43 LUTs and 50
+flip-flops. The unit adds no RAMB tile and no LUT RAM. The whole design has
+15178 LUTs and 9295 flip-flops, against 15009 LUTs and 8934 flip-flops with no
+unit. The difference in LUTs (169) is less than the size of `u_dbg`, because
+Vivado packs the other logic differently.
+
+The worst path of that build has a slack of +0.254 ns. The path goes from a
+breakpoint address register in `u_dbg` to a clock enable of the core
+(`rIX_reg`).
+The build with no unit has a WNS of +0.237 ns.
 
 With `DEBUG_UNIT` at 0, the generic cells of `z80_core` are the same as the
 cells of the commit before the unit (30 `$add`, 424 `$mux` and the rest). The

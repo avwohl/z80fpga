@@ -132,6 +132,22 @@ OSS CAD Suite, and `mingw32-make` on this machine (there is no plain `make`).
 `boards/qomu` is a note explaining why the core does not fit an EOS S3, not a
 build.
 
+**Vivado 2026.1 picks one license tier, and on this machine it picks the
+wrong one.** The license file holds an ALVEO tier and a BASIC tier; Vivado
+takes ALVEO, which does not cover the XC7A100T, and `create_project` fails
+with `[Coretcl 2-106] Specified part could not be found` after
+`[Device 21-9575] Your current selected license is ALVEO`. The tier it takes
+is the first one on the license search path, so point that path at a file
+holding only the BASIC increments:
+
+```
+XILINXD_LICENSE_FILE='C:\Users\amwoh\AppData\Roaming\XilinxLicense\basic_only' \
+    Z80_DEBUG_UNIT=1 vivado -mode batch -source build_romwbw.tcl
+```
+
+The log then says `A valid Vivado Design Suite BASIC license has been
+detected`. Do not set the variable globally: the ALVEO tier is the user's.
+
 yosys on this machine does not understand MSYS paths — `/c/temp/...` is "file
 not found" — so the nextpnr board Makefiles use relative paths from the board
 directory, which works. A `$readmemh` inside the RTL resolves relative to the

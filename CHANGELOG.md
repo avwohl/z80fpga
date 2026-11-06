@@ -4,6 +4,17 @@
 
 ### Added
 
+- The debug unit ran on the Nexys A7 over JTAG (2026-11-06, Windows 11,
+  Vivado 2026.1, the `d2xx` back end). Build with `Z80_DEBUG_UNIT=1`: 0 DRC
+  errors, no `REQP-1962`, 128 of 135 RAMB36, WNS +0.254 ns, WHS +0.060 ns.
+  The same Vivado with no unit gives WNS +0.237 ns, 15009 LUTs and 8934
+  flip-flops; with the unit, 15178 LUTs and 9295 flip-flops. `u_dbg` alone
+  is 410 LUTs and 353 flip-flops, and its JTAG link is 43 LUTs and 50
+  flip-flops. `romwbw_dbg_jtag.xdc` names resolve. GDB 18.1 attached to the
+  running RomWBW, stepped, stopped at a breakpoint and at ^C, wrote memory
+  and read other banks. A 32 KB read of ROM bank 00H matched the image at
+  6 MHz and at 30 MHz. udb80 on the board is not tried.
+
 - The debug unit talks JTAG. `rtl/soc/dbg_jtag_link.sv` is a second
   implementation of the byte interface of `dbg_uart.sv`, on the user register
   USER3 (`BSCANE2`, `JTAG_CHAIN` 3, a 10-bit register: a byte, HV, FV, RJ),
@@ -85,6 +96,16 @@
 
 ### Fixed
 
+- `tools/z80dbg_bridge.py` stops a running core at `?` and at a ^C outside a
+  `continue`, and `monitor status` no longer fails on a running core. Before,
+  GDB could not attach to a board with `DBG_HALT_ON_RESET` at 0, which is the
+  Nexys build. `tools/test_z80dbg_bridge.py` checks both (538 checks).
+- The `d2xx` back end of `tools/z80dbg_jtag.py` finds channel A by name. Index
+  0 was channel B (the UART) on Windows 11.
+- `tools/ossenv.sh` sets `PYTHON` to the Python on `PATH` before the OSS CAD
+  Suite. The suite's own Windows python3 (MinGW 3.11) fails timed socket calls
+  with "unable to select on socket" once a handle value passes FD_SETSIZE,
+  and `make test` failed in the bridge test.
 - `tools/run_sst.py --all` with no suite at the default path (a Windows path,
   `C:/temp/tools/z80tests`) said `name some opcodes, or pass --all` although
   `--all` was given, so `make test` failed with that text on a Mac. It now

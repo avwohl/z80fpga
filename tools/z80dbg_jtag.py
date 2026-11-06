@@ -102,13 +102,15 @@ class D2xxBackend(object):
     BITMODE_RESET = 0x00
     BITMODE_MPSSE = 0x02
 
-    def __init__(self, index=0, freq=6e6, dev=None):
+    def __init__(self, index=None, freq=6e6, dev=None):
         if dev is None:
             try:
                 import ftd2xx
             except ImportError:
                 raise SystemExit("z80dbg_jtag: the d2xx back end needs ftd2xx "
                                  "(pip install ftd2xx) and FTDI's D2XX driver")
+            if index is None:
+                index = d2xx_channel_a(ftd2xx)
             dev = ftd2xx.open(int(index))
         self.d = dev
         d = self.d
@@ -149,13 +151,27 @@ class D2xxBackend(object):
         self.d.close()
 
 
+def d2xx_channel_a(ftd2xx):
+    """The D2XX index of channel A of the first FT2232.  The index order is
+    the driver's, not the chip's: on Windows 11 with the Digilent driver the
+    Nexys A7 lists "Digilent USB Device B" (the UART) as 0 and A as 1.  The
+    driver names the channels with a final A or B, in the description and the
+    serial number."""
+    for i in range(len(ftd2xx.listDevices() or [])):
+        info = ftd2xx.getDeviceInfoDetail(i)
+        if info["description"].endswith(b" A") or info["serial"].endswith(b"A"):
+            return i
+    raise SystemExit("z80dbg_jtag: no FTDI channel A (is the board on USB?); "
+                     "--url N names a D2XX index")
+
+
 def open_backend(name, url=None, freq=6e6):
     """name is pyftdi or d2xx.  url is a pyftdi URL, or for d2xx the index of
-    the D2XX device (channel A of the first FT2232 is 0)."""
+    the D2XX device; without one, d2xx takes channel A of the first FT2232."""
     if name == "pyftdi":
         return PyftdiBackend(url or DEFAULT_URL, freq)
     if name == "d2xx":
-        return D2xxBackend(int(url) if url not in (None, "") else 0, freq)
+        return D2xxBackend(int(url) if url not in (None, "") else None, freq)
     raise ValueError("unknown JTAG back end %r: pyftdi or d2xx" % name)
 
 

@@ -58,6 +58,11 @@ belonged to -- and the measurement traps it cost along the way.
 Every board's console runs at 115200 8N1 with no flow control. Each board's
 README says which port and pins carry the console.
 
+The Nexys A7 RomWBW build is different: its console uses RTS/CTS, and the board
+sends nothing while the host holds RTS off. A terminal with flow control None
+keeps RTS on, so the terminals below work. A script must not turn RTS off. In
+pyserial, set `rtscts = True` or leave `rts` at its default.
+
 `tools/console.ps1` is a minimal Windows terminal that needs nothing installed:
 
 ```

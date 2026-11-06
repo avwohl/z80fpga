@@ -415,7 +415,40 @@ def run_session(jtag):
           c.ask("vCont;r8002,800b:1"), "T05")
     check("pc after the range step", reg(c.ask("g"), "pc"), 0x800B)
     check("D", c.ask("D"), "OK")
+    th.join(10)
 
+    # ---- attach to a core that runs, as on a board with DBG_HALT_ON_RESET = 0:
+    #      D left it running.  The unit reads registers only at a stop.
+    def attach():
+        ls = socket.socket()
+        ls.bind(("127.0.0.1", 0))
+        ls.listen(1)
+
+        def one():
+            conn, _ = ls.accept()
+            bridge.serve(conn)
+            conn.close()
+        t = threading.Thread(target=one)
+        t.daemon = True
+        t.start()
+        return Rsp(ls.getsockname()[1]), t
+
+    def mon(c, text):
+        return bytes.fromhex(c.ask("qRcmd," + text.encode().hex())).decode()
+
+    c, th = attach()
+    check("status of a running core", mon(c, "status").startswith("running pc=? cpu-bank=? "), True)
+    check("? stops a running core", c.ask("?"), "T02")
+    check("status after ?", mon(c, "status").startswith("stopped pc="), True)
+    check("? of a stopped core", c.ask("?"), "T05")
+    check("D after the attach", c.ask("D"), "OK")
+    th.join(10)
+
+    c, th = attach()
+    c.s.sendall(b"\x03")                      # ^C before any packet
+    check("^C stops a running core outside a continue", c.recv(), "T02")
+    check("? after that ^C", c.ask("?"), "T05")
+    check("D after the ^C", c.ask("D"), "OK")
     th.join(10)
     transport.close()
     check_listen_addr(vvp, flag)
