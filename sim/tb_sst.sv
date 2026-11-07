@@ -44,7 +44,7 @@ module tb_sst #(
       .DISP_MEM  ("rtl/core/z80_dispatch.mem")
   ) dut (
       .clk (clk), .rst_n (rst_n), .clk_en (1'b1),
-      .a (a), .din (din), .dout (dout),
+      .a (a), .din (din), .din_late (din), .dout (dout),
       .mreq_n (mreq_n), .iorq_n (iorq_n), .rd_n (rd_n), .wr_n (wr_n),
       .m1_n (m1_n), .rfsh_n (rfsh_n), .halt_n (halt_n), .busak_n (busak_n),
       .wait_n (1'b1), .int_n (1'b1), .nmi_n (1'b1), .busrq_n (1'b1),

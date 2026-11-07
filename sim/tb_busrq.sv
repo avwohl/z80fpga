@@ -66,7 +66,7 @@ module tb_busrq #(
       .DISP_MEM  ("rtl/core/z80_dispatch.mem")
   ) gold (
       .clk (clk), .rst_n (rst_n), .clk_en (1'b1),
-      .a (a[0]), .din (din[0]), .dout (dout[0]),
+      .a (a[0]), .din (din[0]), .din_late (din[0]), .dout (dout[0]),
       .mreq_n (mreq_n[0]), .iorq_n (iorq_n[0]), .rd_n (rd_n[0]), .wr_n (wr_n[0]),
       .m1_n (m1_n[0]), .rfsh_n (rfsh_n[0]), .halt_n (halt_n[0]), .busak_n (busak_n[0]),
       .wait_n (1'b1), .int_n (1'b1), .nmi_n (1'b1), .busrq_n (1'b1),
@@ -81,7 +81,7 @@ module tb_busrq #(
       .DISP_MEM  ("rtl/core/z80_dispatch.mem")
   ) dut (
       .clk (clk), .rst_n (rst_n), .clk_en (1'b1),
-      .a (a[1]), .din (din[1]), .dout (dout[1]),
+      .a (a[1]), .din (din[1]), .din_late (din[1]), .dout (dout[1]),
       .mreq_n (mreq_n[1]), .iorq_n (iorq_n[1]), .rd_n (rd_n[1]), .wr_n (wr_n[1]),
       .m1_n (m1_n[1]), .rfsh_n (rfsh_n[1]), .halt_n (halt_n[1]), .busak_n (busak_n[1]),
       .wait_n (wait_n), .int_n (1'b1), .nmi_n (1'b1), .busrq_n (busrq_n),

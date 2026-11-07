@@ -5,6 +5,19 @@ core, for example z80replacement, names the lowest version that it needs.
 
 ## Unreleased
 
+## 0.2.0 - 2026-11-07
+
+### Added
+
+- The input `din_late`: with `LATE_READ`, the byte of a memory read or an
+  I/O read comes in on `din_late`, and the live bus on `din` goes only to
+  the opcode register and the dispatch ROM. A pin stage then has no static
+  path from its data pins into the action logic. On an ECP5 the opcode
+  fetch path from the data pins goes from 27 ns to 28 ns down to 6 ns to
+  7 ns (z80replacement `docs/routing_study.md`). Every instantiation must
+  connect the new port; a build without `LATE_READ` connects `din` to it.
+  With `LATE_READ` off, the logic is the same as in 0.1.0.
+
 ## 0.1.0 - 2026-11-06
 
 The first version with a number.

@@ -38,7 +38,10 @@ module z80_core #(
     // the end of T2.  A real Z80 samples those at the falling edge in the
     // middle of T3; the pin stage captures the byte there and holds it on
     // `din` until the end of T3.  Opcode fetches and the interrupt vector are
-    // still taken at the end of T2, as the real part takes them.
+    // still taken at the end of T2, as the real part takes them.  The late
+    // byte comes in on `din_late`, so that the live bus on `din` reaches only
+    // the opcode register and the dispatch ROM: a pin stage then has no path
+    // from its data pins into the action logic.
     parameter bit LATE_READ = 1'b0,
     // 1: BUSRQ works.  The core samples busrq_n on each T-state edge, stops at
     // the end of an M-cycle whose last T-state began with busrq_n low, raises
@@ -62,6 +65,10 @@ module z80_core #(
 
     output logic [15:0] a,
     input  logic  [7:0] din,
+    // LATE_READ: the byte of a memory read or an I/O read, which the pin
+    // stage holds from the T3 falling edge.  A build without LATE_READ does
+    // not use it; connect `din` to it.
+    input  logic  [7:0] din_late,
     output logic  [7:0] dout,
 
     output logic        mreq_n,
@@ -414,10 +421,10 @@ module z80_core #(
   logic  [4:0] pd_sel;
   assign pd_late = LATE_READ && latch_now && in_exec;
   always_comb pd_sel = resolve(`UF(uw_cur, PD));          // as alu_b
-  assign rdin_v  = (LATE_READ && latch_now && late_cyc) ? din : rDIN;
+  assign rdin_v  = (LATE_READ && latch_now && late_cyc) ? din_late : rDIN;
   assign rwz_v   = !pd_late             ? rWZ
-                 : (pd_sel == DAT_Z)    ? {rWZ[15:8], din}
-                 : (pd_sel == DAT_W)    ? {din, rWZ[7:0]}
+                 : (pd_sel == DAT_Z)    ? {rWZ[15:8], din_late}
+                 : (pd_sel == DAT_W)    ? {din_late, rWZ[7:0]}
                  :                        rWZ;
 
   // ======================================================================
@@ -707,9 +714,11 @@ module z80_core #(
   // it synchronously keeps it in block RAM instead of spending a thousand
   // LUTs on a 1280-entry mux.
   logic [10:0] disp_sel;
+  logic  [7:0] din_x;     // the byte of a late read: din_late with LATE_READ
+  assign din_x = LATE_READ ? din_late : din;
 
   always_comb begin
-    if (phase == PH_XOP)         disp_sel = 11'(TAB_DDCB) + {3'd0, din};
+    if (phase == PH_XOP)         disp_sel = 11'(TAB_DDCB) + {3'd0, din_x};
     else if (phase == PH_ACK)    disp_sel = 11'(TAB_BASE) + {3'd0, din}; // IM 0
     else if (halted)             disp_sel = 11'(TAB_BASE);              // NOPs
     else if (tab_sel == 2'd1)    disp_sel = 11'(TAB_CB)   + {3'd0, din};
@@ -792,7 +801,7 @@ module z80_core #(
   always_comb begin
     wr8_en  = 1'b0;
     wr8_sel = DAT_NONE;
-    wr8_val = din;
+    wr8_val = din_x;
     if (dbg_wr_go) begin
       wr8_en  = 1'b1;
       wr8_sel = dbg_wr_dat;
@@ -1087,7 +1096,7 @@ module z80_core #(
       // land on the same edge as the action's.  It comes first, so that the
       // action wins if both name one register, as it did when the byte came
       // a T-state earlier.
-      if (pd_late) wreg(pd_sel, din);
+      if (pd_late) wreg(pd_sel, din_late);
       if (DEBUG_UNIT) begin
         if (wr8_en && (clk_go || dbg_wr_go)) wreg(wr8_sel, wr8_val);
       end
@@ -1100,8 +1109,8 @@ module z80_core #(
             (tcnt == strobe_t) && !waiting) abus <= {rI, rR};
 
         if (latch_now) begin
-          rDIN <= din;
-          if (phase == PH_XD) rWZ[7:0] <= din;
+          rDIN <= late_cyc ? din_late : din;
+          if (phase == PH_XD) rWZ[7:0] <= din_x;
         end
         if (!DEBUG_UNIT) begin
           if (wr8_en) wreg(wr8_sel, wr8_val);

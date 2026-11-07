@@ -34,8 +34,8 @@ at the rising edge gives memory and I/O devices half a T-state less time than
 the real part.
 
 With `LATE_READ = 1`, the pin stage captures the byte at the T3 falling edge
-and holds it on `din` until the end of T3. The core takes the byte at the
-rising edge that ends T3. The DD CB displacement byte and the DD CB opcode
+and holds it on `din_late` until the end of T3. The core takes the byte at
+the rising edge that ends T3. The DD CB displacement byte and the DD CB opcode
 byte are memory reads, so they also use the late edge.
 
 A read of 3 T-states (4 for I/O) now ends on the edge that takes its byte.
@@ -45,6 +45,14 @@ edge sees them), in the same way as the `_x` signals in
 [architecture.md](architecture.md). The read byte also gets its own register
 write port. The write port of the action comes after that port. Thus the
 action wins if both write the same register.
+
+The late byte has its own input, `din_late`, and the live bus on `din`
+goes only to the opcode register and the dispatch ROM. The action logic
+reads the late byte only. Thus a pin stage has no path from its data pins
+into the action logic, and the static timing of an opcode fetch is short:
+z80replacement measured 6 ns to 7 ns from the data pins on an ECP5, against
+27 ns to 28 ns with one input. A build without `LATE_READ` connects `din` to
+`din_late`, and the logic is the same as before the port existed.
 
 `make test-full-late` runs the complete opcode suite on this core. The pins
 do not change, so the same bus traces apply. If the core reads WZ or DIN
@@ -140,10 +148,11 @@ A board that has no pin stage leaves these ports unconnected.
 - Sample `/WAIT` at the falling edge of T2 (or of the wait state) and give
   the sampled value to `wait_n`. The core reads `wait_n` at the next rising
   edge.
-- For an opcode fetch and an interrupt acknowledge, give the live data bus to
-  `din`. For a memory read and an I/O read with `LATE_READ`, give the byte
-  captured at the T3 falling edge.
-- Hold the captured byte on `din` until the core takes it. A bus hold can
+- Give the live data bus to `din`. The core uses `din` for an opcode fetch
+  and an interrupt acknowledge.
+- With `LATE_READ`, give the byte captured at the T3 falling edge to
+  `din_late`. The core uses `din_late` for a memory read and an I/O read.
+- Hold the captured byte on `din_late` until the core takes it. A bus hold can
   start on the edge that takes the byte. In that case the core takes the
   byte after the hold, when the data bus belongs to another device.
 

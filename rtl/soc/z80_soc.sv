@@ -246,7 +246,7 @@ module z80_soc #(
       .DISP_MEM  (DISP_MEM)
   ) u_cpu (
       .clk (clk), .rst_n (core_rst_n), .clk_en (core_clk_en),
-      .a (a), .din (din), .dout (dout),
+      .a (a), .din (din), .din_late (din), .dout (dout),
       .mreq_n (mreq_n), .iorq_n (iorq_n), .rd_n (rd_n), .wr_n (wr_n),
       .m1_n (m1_n), .rfsh_n (rfsh_n), .halt_n (halt_n), .busak_n (busak_n),
       .wait_n (wait_n), .int_n (1'b1), .nmi_n (1'b1), .busrq_n (1'b1),
