@@ -193,7 +193,7 @@ and the inputs are not read. [debug_unit.md](debug_unit.md) has the details.
 (default, and what a synchronous FPGA memory wants) and holding MREQ/RD/WR
 across the cycle the way the real part drives an external bus.
 
-The `bus_*` outputs, and the parameters `LATE_READ` and `BUSREQ`, are for a
-core that drives a real Z80 bus through a pin stage.
+The `bus_*` outputs, and the parameters `LATE_READ`, `BUSREQ` and
+`REAL_ACK`, are for a core that drives a real Z80 bus through a pin stage.
 [bus_pins.md](bus_pins.md) has the details. A board that has no pin stage
 leaves the outputs unconnected and the parameters at 0.

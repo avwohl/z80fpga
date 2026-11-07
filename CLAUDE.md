@@ -122,6 +122,9 @@ The `LATE_READ` / `BUSREQ` change to `rtl/core/z80_core.sv` on 2026-11-06
 was rebuilt the same way: 0 DRC errors, no `REQP-1962`, 128 of 135 RAMB36,
 "All user specified timing constraints are met" with WNS +0.791 ns and WHS
 +0.026 ns over 20724 endpoints. Built only; not run on the board.
+The `REAL_ACK` change the same day (parameter off in this build) rebuilt to
+the same numbers: 0 DRC errors, no `REQP-1962`, 128 of 135 RAMB36, 14967
+LUTs, WNS +0.791 ns and WHS +0.026 ns over 20724 endpoints. Built only.
 
 What is *not* fragile is the ROM's contents, and it is worth knowing before
 this section scares you off trying another image. A rebuild carrying RomWBW

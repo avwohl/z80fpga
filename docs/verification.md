@@ -168,6 +168,12 @@ The EI delay falls out of the design rather than being special-cased: IFF1 is
 read before the clock edge that EI's own action sets it on, so the boundary at
 the end of EI cannot accept an interrupt and the next one can.
 
+`sim/tb_irq_real.vvp` is the same bench on a core with `REAL_ACK = 1`
+([bus_pins.md](bus_pins.md#real_ack)). It also checks that the acknowledge
+and the NMI response count R, and the bench puts the vector on the bus only
+in the 4th T-state of the acknowledge. Two wrong cores fail it: one that
+takes the vector in the 3rd T-state, and one that does not count R.
+
 ## LATE_READ
 
 `make test-full-late` runs the whole suite again on a core built with
@@ -203,8 +209,9 @@ only at the end of an M-cycle.
   does that from `bus_float`. `wait_n` is not on this list: the off-chip
   memory benches above hold it low for a variable number of T-states on every
   access.
-- **Interrupt acknowledge refresh.** The INT and NMI acknowledge cycles do not
-  put the refresh address on the bus or increment R. See
+- **Interrupt acknowledge refresh in the default build.** Without
+  `REAL_ACK`, the INT and NMI acknowledge cycles do not put the refresh
+  address on the bus or increment R. See
   [bus_pins.md](bus_pins.md#known-differences-from-the-real-part).
 - **Hardware, on three boards.** The Nexys A7-100T has run: banner, bank
   check, console echo, and RomWBW and CP/M 2.2 on top of that. The Tang Nano

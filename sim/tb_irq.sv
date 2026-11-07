@@ -4,10 +4,17 @@
 // covers it: NMI, IM 0, IM 1 and IM 2, the EI delay, the masking by IFF1, and
 // waking from HALT.  Each case checks where the CPU ended up, what it pushed,
 // what happened to IFF1 and IFF2, and how many T-states the entry took.
+//
+// Build with -Ptb_irq.REAL_ACK=1 for the core's REAL_ACK cycles.  The entries
+// take the same T-states; the acknowledge and the NMI response also count R,
+// and the vector must be on the bus at the end of the acknowledge's 4th
+// T-state.
 
 `timescale 1ns/1ps
 
-module tb_irq;
+module tb_irq #(
+    parameter bit REAL_ACK = 1'b0
+);
 
   logic clk = 0;
   logic rst_n = 0;
@@ -21,6 +28,7 @@ module tb_irq;
   logic [7:0] irq_vec = 8'hFF;
 
   z80_core #(
+      .REAL_ACK  (REAL_ACK),
       .UCODE_MEM ("rtl/core/z80_ucode.mem"),
       .DISP_MEM  ("rtl/core/z80_dispatch.mem")
   ) dut (
@@ -33,7 +41,11 @@ module tb_irq;
 
   // The acknowledge cycle asserts M1 and IORQ together; that is when the
   // device puts its vector on the bus.
-  assign din = (!iorq_n && !m1_n) ? irq_vec : mem[a];
+  // With REAL_ACK the vector is there only in the T-state that ends with the
+  // edge the real part takes it on, so a core that takes it earlier fails.
+  logic ack_vec_ok;
+  assign ack_vec_ok = !REAL_ACK || (dut.tcnt == 4'd4);
+  assign din = (!iorq_n && !m1_n) ? (ack_vec_ok ? irq_vec : 8'h5A) : mem[a];
 
   always @(posedge clk) if (!mreq_n && !wr_n) mem[a] <= dout;
 
@@ -53,6 +65,15 @@ module tb_irq;
   task automatic expect16(input [127:0] what, input [15:0] got, want);
     if (got !== want) begin
       $display("  FAIL %0s: got %04h want %04h", what, got, want);
+      fails = fails + 1;
+    end
+  endtask
+
+  // R after one NOP and one entry: the NOP counts 1, and the entry counts 1
+  // more with REAL_ACK.
+  task automatic expect_r();
+    if (dut.rR !== (REAL_ACK ? 8'h02 : 8'h01)) begin
+      $display("  FAIL r: got %02h want %02h", dut.rR, REAL_ACK ? 8'h02 : 8'h01);
       fails = fails + 1;
     end
   endtask
@@ -124,6 +145,7 @@ module tb_irq;
     expect1 ("iff1", dut.iff1, 1'b0);
     expect1 ("iff2", dut.iff2, 1'b1);          // NMI keeps IFF2 for RETN
     expect_t(tirq, 11);
+    expect_r();
 
     // ----------------------------------------------------------- IM 1, 13 T
     $display("INT, IM 1");
@@ -137,6 +159,7 @@ module tb_irq;
     expect1 ("iff1", dut.iff1, 1'b0);
     expect1 ("iff2", dut.iff2, 1'b0);
     expect_t(tirq, 13);
+    expect_r();
 
     // ----------------------------------------------------------- IM 2, 19 T
     $display("INT, IM 2");
@@ -151,6 +174,7 @@ module tb_irq;
     expect16("sp", dut.rSP, 16'hFEFE);
     expect16("pushed", {mem[16'hFEFF], mem[16'hFEFE]}, 16'h2001);
     expect_t(tirq, 19);
+    expect_r();
 
     // ------------------------------------------- IM 0 with RST 38h, 13 T
     $display("INT, IM 0 with RST 38h");
@@ -162,6 +186,7 @@ module tb_irq;
     expect16("pc", dut.rPC, 16'h0038);
     expect16("pushed", {mem[16'hFEFF], mem[16'hFEFE]}, 16'h2001);
     expect_t(tirq, 13);
+    expect_r();
 
     // ------------------------------------------------- masked while IFF1 = 0
     $display("INT ignored while IFF1 is clear");
@@ -211,7 +236,7 @@ module tb_irq;
     expect16("pushed", {mem[16'hFEFF], mem[16'hFEFE]}, 16'h6001);
 
     $display("");
-    if (fails == 0) $display("PASS: all interrupt cases");
+    if (fails == 0) $display("PASS: all interrupt cases (REAL_ACK=%0d)", REAL_ACK);
     else            $display("FAIL: %0d checks failed", fails);
     $finish;
   end

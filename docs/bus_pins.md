@@ -15,14 +15,15 @@ parameter numbers.
 
 ## Parameters
 
-Both parameters are 0 by default. With both at 0, every new term in the
-core is a constant, and the core has the same logic as before the
+The three parameters are 0 by default. With all three at 0, every new term
+in the core is a constant. The core then has the same logic as before the
 parameters existed.
 
 | Parameter | Effect |
 |---|---|
 | `LATE_READ` | A memory read and an I/O read take the byte at the end of T3, not at the end of T2. Opcode fetches and the interrupt vector are still taken at the end of T2. |
 | `BUSREQ` | `busrq_n` works. The core stops at the end of an M-cycle, sets `bus_float` and lowers `busak_n`. |
+| `REAL_ACK` | The interrupt acknowledge and the NMI response have the timing, the refresh and the R count of the real part. |
 
 ### LATE_READ
 
@@ -82,11 +83,38 @@ address bus, the data bus, `/MREQ`, `/IORQ`, `/RD` and `/WR` while
 `sim/tb_busrq.sv` checks this protocol. Refer to
 [verification.md](verification.md#busrq).
 
+### REAL_ACK
+
+The real part makes the interrupt acknowledge in 6 T-states: T1, T2, two
+automatic wait states (TW1 and TW2), T3 and T4. /IORQ goes low at the
+falling edge in TW1. The real part samples /WAIT at the falling edge in TW2
+and takes the vector at the rising edge that starts T3. T3 and T4 are a
+refresh, as in an opcode fetch. The NMI response is an opcode fetch whose
+byte the real part ignores, with one more T-state.
+
+Without `REAL_ACK`, the core samples `wait_n` in the 3rd T-state of the
+acknowledge and takes the vector at the end of it. That is one T-state too
+early for a real device, because /IORQ is then low for only half a T-state.
+The NMI response has no wait states. Neither cycle has a refresh.
+
+With `REAL_ACK = 1`:
+
+- The acknowledge samples `wait_n` in its 4th T-state (TW2) and takes the
+  vector at the end of that T-state. `bus_t` stays at 4 during wait states.
+- The NMI response samples `wait_n` in T2 and takes its byte at the end of
+  T2, as an opcode fetch. The core asserts `mreq_n` and `rd_n` in the cycle.
+- Both cycles put I and R on `a` in T3 and T4 (the 5th and 6th T-states of
+  the acknowledge), assert `rfsh_n` there, and increment R.
+
+The number of T-states does not change. `sim/tb_irq.sv` with
+`-Ptb_irq.REAL_ACK=1` (`sim/tb_irq_real.vvp`) checks the cases again, checks
+R, and gives the vector only in the 4th T-state of the acknowledge.
+
 ## Status ports
 
 | Port | Width | Meaning |
 |---|---|---|
-| `bus_t` | 4 | The T-state of the M-cycle, 1 for T1. During wait states, `bus_t` stays at 2 in a memory cycle and at 3 in an I/O cycle or an interrupt acknowledge. |
+| `bus_t` | 4 | The T-state of the M-cycle, 1 for T1. During wait states, `bus_t` stays at 2 in a memory cycle and at 3 in an I/O cycle or an interrupt acknowledge (at 4 in the acknowledge with `REAL_ACK`). |
 | `bus_cyc` | 3 | The type of M-cycle, from the table below. |
 | `bus_last` | 1 | High in the last T-state of the M-cycle. |
 | `bus_float` | 1 | High while the bus is given away (`BUSREQ` only). |
@@ -127,9 +155,11 @@ A board that has no pin stage leaves these ports unconnected.
   previous M-cycle. Thus the core can give the bus away a few T-states
   earlier than the real part, inside an instruction such as `INC BC`. The
   data and the result do not change.
-- **Interrupt acknowledge and NMI response.** In these cycles, the core does
-  not refresh: no refresh address on `a`, no `rfsh_n`, and no increment of
-  R. The real part does all three. The NMI response cycle also has
-  no `mreq_n` or `rd_n` from the core. A pin stage that must refresh DRAM
-  loses one refresh cycle at each interrupt. The SingleStepTests suite does
-  not test interrupts, and `sim/tb_irq.sv` does not check R.
+- **Interrupt acknowledge and NMI response without `REAL_ACK`.** In these
+  cycles, the core does not refresh: no refresh address on `a`, no
+  `rfsh_n`, and no increment of R. The real part does all three. The NMI
+  response cycle also has no `mreq_n` or `rd_n` from the core. `REAL_ACK`
+  removes these differences.
+- **/HALT.** The core changes `halt_n` on the rising edge at the end of T4.
+  The real part changes /HALT at the falling edge in T4, half a T-state
+  earlier.

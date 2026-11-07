@@ -39,7 +39,7 @@ boot sw/boot.hex: sw/boot.z80 tools/zasm.py
 	$(PYTHON) tools/zasm.py sw/boot.z80 -o sw/boot.hex --size 32768
 
 sim: sim/tb_sst.vvp sim/tb_sst_late.vvp sim/tb_busrq.vvp sim/tb_busrq_late.vvp \
-     sim/tb_soc.vvp sim/tb_irq.vvp sim/tb_ddr2ram.vvp \
+     sim/tb_soc.vvp sim/tb_irq.vvp sim/tb_irq_real.vvp sim/tb_ddr2ram.vvp \
      sim/tb_sdram.vvp sim/tb_sdram_soc.vvp sim/tb_romload.vvp \
      sim/tb_hdsk.vvp sim/tb_hdsk_soc.vvp \
      sim/tb_debug.vvp sim/tb_debug_div3.vvp sim/tb_debug_ddr2.vvp \
@@ -69,6 +69,10 @@ sim/tb_soc.vvp: sim/tb_soc.sv $(SOC) $(GEN) sw/boot.hex
 
 sim/tb_irq.vvp: sim/tb_irq.sv $(CORE) $(GEN)
 	$(IVERILOG) -g2012 -I rtl/core -o $@ sim/tb_irq.sv $(CORE)
+
+# The same cases on the core's REAL_ACK cycles (docs/bus_pins.md).
+sim/tb_irq_real.vvp: sim/tb_irq.sv $(CORE) $(GEN)
+	$(IVERILOG) -g2012 -I rtl/core -Ptb_irq.REAL_ACK=1 -o $@ sim/tb_irq.sv $(CORE)
 
 # The SoC with its RAM in DDR2: wait states and the AXI handshakes, against a
 # behavioural slave with deliberately awkward latency.
@@ -234,6 +238,7 @@ romwbw-debug: sim/tb_romwbw_dbg.vvp sim/romwbw512k.hex
 test: sim
 	$(PYTHON) tools/test_zasm.py
 	$(VVP) sim/tb_irq.vvp
+	$(VVP) sim/tb_irq_real.vvp
 	$(VVP) sim/tb_busrq.vvp
 	$(VVP) sim/tb_busrq_late.vvp
 	$(VVP) sim/tb_soc.vvp

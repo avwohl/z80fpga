@@ -1,8 +1,25 @@
 # Changelog
 
+`VERSION` holds the version of the last release. A project that uses the
+core, for example z80replacement, names the lowest version that it needs.
+
 ## Unreleased
 
+## 0.1.0 - 2026-11-06
+
+The first version with a number.
+
 ### Added
+
+- Ports and parameters for a pin stage on a real Z80 bus
+  (`docs/bus_pins.md`), all off by default: the status outputs `bus_t`,
+  `bus_cyc`, `bus_last`, `bus_float` and `bus_resume`; `LATE_READ` (the
+  byte of a memory read or an I/O read at the end of T3); `BUSREQ` (a real
+  bus grant); and `REAL_ACK` (the interrupt acknowledge and the NMI
+  response of the real part, with the vector taken in TW2, wait states,
+  refresh and the R count). `make test-full-late`, `sim/tb_busrq.sv` and
+  `sim/tb_irq_real.vvp` test them. With all of them off, the core has the
+  logic it had before.
 
 - The debug unit ran on the Nexys A7 over JTAG (2026-11-06, Windows 11,
   Vivado 2026.1, the `d2xx` back end). Build with `Z80_DEBUG_UNIT=1`: 0 DRC

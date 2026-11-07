@@ -45,6 +45,14 @@ module z80_core #(
     // bus_float and lowers busak_n until busrq_n is high again.  0: busak_n
     // follows busrq_n and the core never stops, as before.
     parameter bit BUSREQ = 1'b0,
+    // 1: the interrupt acknowledge and the NMI response are the real part's
+    // cycles.  The acknowledge samples WAIT in its second automatic wait
+    // state and takes the vector at the end of it, the rising edge that
+    // starts T3.  The NMI response is an opcode fetch, with MREQ, RD and wait
+    // states.  Both put the refresh address on the bus in T3 and T4, assert
+    // RFSH and count R.  0: the cycles the core always had, as the interrupt
+    // bench expects them.
+    parameter bit REAL_ACK = 1'b0,
     parameter     UCODE_MEM = "z80_ucode.mem",
     parameter     DISP_MEM  = "z80_dispatch.mem"
 ) (
@@ -76,7 +84,8 @@ module z80_core #(
     //
     // bus_t is the T-state of the current M-cycle, 1 for T1; it stays at 2
     // through wait states in a memory cycle and at 3 in an I/O cycle or an
-    // interrupt acknowledge.  bus_cyc is one of the BCYC_* codes below.
+    // interrupt acknowledge (at 4 in the acknowledge with REAL_ACK).  bus_cyc
+    // is one of the BCYC_* codes below.
     // bus_last is high in the last T-state of the M-cycle.  bus_float is high
     // while the bus is given away under BUSRQ, and bus_resume is high in the
     // last T-state of that, whose rising edge saw busrq_n high again.
@@ -371,15 +380,20 @@ module z80_core #(
     endcase
   end
 
-  // I/O and interrupt acknowledge strobe in T3, memory in T2
-  assign strobe_t = (is_io || phase == PH_ACK || phase == PH_NMIA) ? 4'd3 : 4'd2;
+  // I/O and interrupt acknowledge strobe in T3, memory in T2.  With REAL_ACK
+  // the acknowledge waits and takes its vector in the 4th T-state (TW2), and
+  // the NMI response is timed as the opcode fetch it is on the real part.
+  assign strobe_t = (REAL_ACK && phase == PH_ACK)  ? 4'd4
+                  : (REAL_ACK && phase == PH_NMIA) ? 4'd2
+                  : (is_io || phase == PH_ACK || phase == PH_NMIA) ? 4'd3 : 4'd2;
 
   logic waiting, latch_now, cyc_done, has_bus;
   logic late_cyc;
   logic [3:0] latch_t;
   assign has_bus   = (tlen != 4'd0);
   assign waiting   = has_bus && (tcnt == strobe_t) && !wait_n &&
-                     (phase != PH_NMIA) && (in_exec ? (cur_bus != BUS_INT) : 1'b1);
+                     (REAL_ACK || phase != PH_NMIA) &&
+                     (in_exec ? (cur_bus != BUS_INT) : 1'b1);
   // LATE_READ: the reads that the real part samples at the T3 falling edge
   // (memory read, I/O read, and the two DD CB bytes after the prefixes, which
   // are memory reads) take their byte one T-state after the strobe T-state.
@@ -465,9 +479,19 @@ module z80_core #(
   // ======================================================================
   logic strobe_win, mem_cycle, io_cycle;
 
-  assign mem_cycle = has_bus && (!in_exec ? (phase != PH_ACK && phase != PH_NMIA)
+  assign mem_cycle = has_bus && (!in_exec ? (phase != PH_ACK &&
+                                             (REAL_ACK || phase != PH_NMIA))
                                           : (cur_bus == BUS_MR || cur_bus == BUS_MW));
   assign io_cycle  = is_io || (phase == PH_ACK);
+
+  // REAL_ACK: the refresh half of the acknowledge (its T3 and T4, the 5th and
+  // 6th T-states) and of the NMI response (T3 and T4).  ack_ra is the time
+  // the refresh address is on the bus; the NMI response keeps it in T5, as
+  // the opcode fetch keeps it through an internal T-state that follows.
+  logic ack_rf, ack_ra;
+  assign ack_ra = REAL_ACK && ((phase == PH_ACK  && tcnt >= 5) ||
+                               (phase == PH_NMIA && tcnt >= 3));
+  assign ack_rf = ack_ra && !(phase == PH_NMIA && tcnt >= 5);
   // With LATE_READ and the strobes held, a read holds them to the end of the
   // T-state that takes the byte.  The single-T-state form stays the suite's.
   assign strobe_win = STROBE_1T
@@ -477,6 +501,8 @@ module z80_core #(
   always_comb begin
     if (is_m1)
       a = (tcnt >= 3) ? {rI, rR} : rPC;
+    else if (ack_ra)
+      a = {rI, rR};
     else if (phase == PH_XD || phase == PH_XOP ||
              phase == PH_ACK || phase == PH_NMIA)
       a = rPC;
@@ -486,16 +512,19 @@ module z80_core #(
 
   // While the bus is given away, /M1 and /RFSH are inactive too: the real
   // part does not float them, but it does not assert them either.
-  assign m1_n    = !(((is_m1 && tcnt <= 2) || phase == PH_ACK || phase == PH_NMIA)
+  assign m1_n    = !(((is_m1 && tcnt <= 2) ||
+                      (phase == PH_ACK  && (!REAL_ACK || tcnt <= 4)) ||
+                      (phase == PH_NMIA && (!REAL_ACK || tcnt <= 2)))
                      && !hold);
-  assign rfsh_n  = !(is_m1 && tcnt >= 3 && !hold);
+  assign rfsh_n  = !(((is_m1 && tcnt >= 3) || ack_rf) && !hold);
   assign halt_n  = !halted;
   assign busak_n = BUSREQ ? !hold : busrq_n;
   always_comb dout = rd8(resolve(`UF(uw_cur, WSRC)));     // as alu_b
 
   assign mreq_n = !(strobe_win && mem_cycle && !hold);
   assign iorq_n = !(strobe_win && io_cycle && !hold);
-  assign rd_n   = !(strobe_win && is_read && has_bus && (phase != PH_NMIA) &&
+  assign rd_n   = !(strobe_win && is_read && has_bus &&
+                    (REAL_ACK || phase != PH_NMIA) &&
                     (!in_exec || cur_bus == BUS_MR || cur_bus == BUS_IOR) && !hold);
   assign wr_n   = !(strobe_win && is_write && !hold);
 
@@ -1067,6 +1096,8 @@ module z80_core #(
         // The refresh address stays on the pins through any internal cycle
         // that follows the fetch, which is what the bus traces show.
         if (is_m1 && (tcnt == strobe_t) && !waiting) abus <= {rI, rR};
+        if (REAL_ACK && (phase == PH_ACK || phase == PH_NMIA) &&
+            (tcnt == strobe_t) && !waiting) abus <= {rI, rR};
 
         if (latch_now) begin
           rDIN <= din;
@@ -1094,6 +1125,10 @@ module z80_core #(
               first_m1 <= 1'b0;
             end
           end
+          // The acknowledge and the NMI response are M1 cycles with a
+          // refresh on the real part, and count R as a fetch does.
+          if (REAL_ACK && (phase == PH_ACK || phase == PH_NMIA))
+            rR <= {rR[7], rR[6:0] + 7'd1};
 
           if (is_m1 && is_prefix_byte) begin
             case (opcode)
